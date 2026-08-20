@@ -37,21 +37,24 @@ The format is ZIP plus TOML, and both have mature pure-Rust libraries. The imple
 
 **Pure Rust, no C dependencies.** This applies to the whole tree, including transitive dependencies pulled in by optional features. The zip and compression crates ship optional backends that link C libraries; those features stay off, and the resulting build must cross-compile with nothing installed but a Rust toolchain.
 
-- **ZIP** — a maintained pure-Rust crate, deflate only.
-- **TOML** — a crate implementing TOML 1.1.0, with a document model that preserves the original text on round-trip rather than a serde struct mapping. The specification requires preserving keys an implementation does not recognize, and deserializing into a struct drops them. A document model preserves comments, key order, and whitespace as well, so a person who hand-wrote the metadata gets it back as they wrote it.
+- **ZIP** — `zip`, with `default-features = false` and `features = ["deflate-flate2-zlib-rs"]`. Its default set links libbz2 and libzstd through `bzip2-sys` and `zstd-sys`, so switching the defaults off is what the rule above demands rather than a preference, and asking for `deflate` instead of naming the flate2 backend pulls `zopfli` and three more crates to reach a compression level nothing here uses. What remains is fifteen crates with no C among them, and `cargo check` succeeds for `x86_64-pc-windows-msvc` on a machine carrying no MSVC toolchain.
+- **TOML** — `toml_edit`, which implements TOML 1.1.0 as the specification requires, with a document model that preserves the original text on round-trip rather than a serde struct mapping. The specification requires preserving keys an implementation does not recognize, and deserializing into a struct drops them. A document model preserves comments, key order, and whitespace as well, so a person who hand-wrote the metadata gets it back as they wrote it.
 - **CLI argument parsing** — clap with the derive feature, which every Rust binary in the fleet uses.
 - **Error types** — none taken. The library declares its own error enum with a `Display` impl and a bare `std::error::Error`, which is what the fleet's published crates do: neither `thiserror` nor `anyhow` appears in `xaddr` or `encsniff`. Three families over a handful of variants do not earn a macro, and a crate meant to be linked without deliberation should add nothing to a consumer's tree.
 
-Four things to verify, because each is an assumption about the ZIP crate rather than about the format. The first two gate the read path, the third rewriting, the fourth packing from a reader:
+Four things here were assumptions about the ZIP crate rather than about the format, and each was checked against `zip` 8.6 before any of the design leaned on it. All four hold.
 
-- that member names are decoded per general purpose bit 11 — UTF-8 when set, CP437 otherwise — as the specification requires for matching `payload.file`;
-- that the crate exposes enough of a member's external attributes to detect a symlink entry;
-- that a member can be copied from one archive to another without being decompressed, so that a container survives a rewrite whether or not this build can read every member in it; and
-- that a member can be written from a source whose length is not known in advance, by data descriptor or by spooling.
+**Member names are decoded per general purpose bit 11 by the crate itself**, UTF-8 when the flag is set and CP437 otherwise, which is what the specification requires for matching `payload.file`. The CP437 table is total over all 256 bytes. This is work the Go implementation has to do by hand and this one does not.
 
-If any is missing, it is handled here rather than worked around in the format.
+**Symlink entries are detectable.** `unix_mode` reads the high half of the external attributes, which is where every archiver that can express a symlink puts one, whatever platform wrote the archive. An entry made on FAT has no such bits and the crate synthesizes an ordinary file mode for it, so the answer there is that it is not a symlink, which is both true and the safe direction to be wrong in.
 
-**The minimum supported Rust version comes from the dependencies rather than from this code.** The fleet measures the floor and declares it, rather than inferring it from the edition. Here the number is whatever the ZIP and TOML crates demand, which is above the rest of the fleet's and rises whenever either of them raises theirs. The manifest says so where it declares the number, because a floor inherited from a dependency moves without anyone here deciding that it should, and a consumer reading `rust-version` cannot otherwise tell the two cases apart.
+**A member can be copied without being decompressed**, but only through `by_index_raw`. The obvious `by_index` refuses a member whose compression method this build does not carry, which is exactly the member the rewrite path exists to preserve. Encrypted members behave the same way and copy the same way, so §2.5 of the specification is satisfiable rather than aspirational.
+
+**A member can be written from a source of unknown length**, and `ZipWriter::new_stream` does it over a writer that implements only `Write`, emitting a data descriptor. The writing half of the library therefore needs no `Seek` bound at all, which is a smaller demand on a caller than the design assumed.
+
+A fifth assumption sat inside the first, unstated, and that one does not hold: that a name the crate hands back can be trusted to be the name. When bit 11 is set but the name bytes are not valid UTF-8, the crate substitutes U+FFFD rather than reporting the problem, and nothing in the public API reports which decoding it chose — `ZipArchive` hands back no reference to its reader, so the flag word cannot be re-read either. Two members can then decode to the same name, and a `payload.file` carrying U+FFFD can match a member whose real name is something else, which puts the result at the mercy of member order that the specification forbids depending on. The rule that closes it needs no flag: CP437 decoding never produces U+FFFD, so a decoded name carrying one over raw bytes that are not valid UTF-8 came from the lossy branch, and that member's true name is not a Rust string and equals no `payload.file`, which always is one. Such a member never matches.
+
+**The minimum supported Rust version is 1.88, and it comes from the dependencies rather than from this code.** The fleet measures the floor and declares it, rather than inferring it from the edition; 1.88 is what `zip` asks for, above `toml_edit`'s 1.85 and everything below them, and it was built and run rather than read off a manifest. The number is whatever the ZIP and TOML crates demand, which is above the rest of the fleet's and rises whenever either of them raises theirs. The manifest says so where it declares the number, because a floor inherited from a dependency moves without anyone here deciding that it should, and a consumer reading `rust-version` cannot otherwise tell the two cases apart.
 
 ---
 
@@ -91,7 +94,7 @@ The bytes are for a caller who wants a different parser, a schema validator, or 
 
 ### 4.3 Packing
 
-`pack_reader` takes a name and a `Read`, not a `Read + Seek`. Requiring seek would allow two passes over the payload to compute its length and checksum before the local header goes down, and it would also rule out pipes, sockets, and anything generated as it is written, which are the reason the reader form exists at all. The length is therefore unknown at the moment the header is written, and the member goes out with a data descriptor or is spooled first — the fourth item in §3. Either produces a conformant container; the specification constrains none of this.
+`pack_reader` takes a name and a `Read`, not a `Read + Seek`. Requiring seek would allow two passes over the payload to compute its length and checksum before the local header goes down, and it would also rule out pipes, sockets, and anything generated as it is written, which are the reason the reader form exists at all. The length is therefore unknown at the moment the header is written, and the member goes out with a data descriptor, which §3 confirmed the crate emits over a writer that implements only `Write`. That settles the other bound too: nothing on the write side asks a caller for `Seek`, so a container can be packed straight into a socket or a pipe. The specification constrains none of this.
 
 `pack_file` has neither problem, because a file on disk can be measured and read twice.
 
@@ -155,8 +158,8 @@ Two layers.
 
 ## 7. Build order
 
-1. **Read path** — open, parse, validate, expose the payload as a stream. Includes the first two ZIP-crate assumptions in §3.
-2. **Write path** — packing from a reader and from a path, and rewriting a container's metadata with unknown keys and unknown members preserved. Includes the other two.
+1. **Read path** — open, parse, validate, expose the payload as a stream. Carries the name-matching rule from §3, including the guard against a lossily decoded name.
+2. **Write path** — packing from a reader and from a path, and rewriting a container's metadata with unknown keys and unknown members preserved. Copies members through `by_index_raw` and writes unknown-length ones through `new_stream`, per §3.
 3. **CLI** over both.
 4. **Wire in the conformance corpus** once the specification repository has one, keeping the generated fixtures for cases it does not cover.
 
