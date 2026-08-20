@@ -1,7 +1,7 @@
 # slpc-rust — Design Document
 
 **Status:** design draft. Nothing built.
-**Document version:** draft, 2026-08-19
+**Document version:** draft, 2026-08-20
 **Implements:** slipcase specification 1.0
 
 ---
@@ -27,7 +27,7 @@ Repository names and published crate names are independent, so the two identitie
 
 crates.io publishes packages, not repositories, and knows nothing about where a package came from — the `repository` field is a URL and nothing more. A workspace publishing several crates is the ordinary Rust shape: tokio, serde, clap, and ripgrep all do it. Two consequences for the release path: the CLI's dependency on the library carries both a path and a version (`slpc = { path = "../slpc", version = "…" }`), since crates.io rejects a path-only dependency; and `slpc` publishes before `slipcase`, because the registry must already hold the version the binary asks for.
 
-The two crates version in lockstep. The CLI is a thin shell over the library, and independent versions would mean per-crate tags and a release tool to manage them, against the fleet's one-version-per-repository convention.
+The two crates version in lockstep. The CLI is a thin shell over the library, and independent versions would mean per-crate tags and a release tool to manage them, against the fleet's one-version-per-repository convention. The workflow that publishes them is this repository's own rather than the fleet's shared one, which runs a bare `cargo publish` that a workspace root with two members rejects; this one names each crate and waits for the registry between them.
 
 ---
 
@@ -38,8 +38,9 @@ The format is ZIP plus TOML, and both have mature pure-Rust libraries. The imple
 **Pure Rust, no C dependencies.** This applies to the whole tree, including transitive dependencies pulled in by optional features. The zip and compression crates ship optional backends that link C libraries; those features stay off, and the resulting build must cross-compile with nothing installed but a Rust toolchain.
 
 - **ZIP** — a maintained pure-Rust crate, deflate only.
-- **TOML** — a crate with a document model that preserves the original text on round-trip, not a serde struct mapping. The specification requires preserving keys an implementation does not recognize, and deserializing into a struct drops them. A document model preserves comments, key order, and whitespace as well, so a person who hand-wrote the metadata gets it back as they wrote it.
-- **CLI argument parsing and error types** — whatever the rest of the fleet uses.
+- **TOML** — a crate implementing TOML 1.1.0, with a document model that preserves the original text on round-trip rather than a serde struct mapping. The specification requires preserving keys an implementation does not recognize, and deserializing into a struct drops them. A document model preserves comments, key order, and whitespace as well, so a person who hand-wrote the metadata gets it back as they wrote it.
+- **CLI argument parsing** — clap with the derive feature, which every Rust binary in the fleet uses.
+- **Error types** — none taken. The library declares its own error enum with a `Display` impl and a bare `std::error::Error`, which is what the fleet's published crates do: neither `thiserror` nor `anyhow` appears in `xaddr` or `encsniff`. Three families over a handful of variants do not earn a macro, and a crate meant to be linked without deliberation should add nothing to a consumer's tree.
 
 Four things to verify, because each is an assumption about the ZIP crate rather than about the format. The first two gate the read path, the third rewriting, the fourth packing from a reader:
 
@@ -49,6 +50,8 @@ Four things to verify, because each is an assumption about the ZIP crate rather 
 - that a member can be written from a source whose length is not known in advance, by data descriptor or by spooling.
 
 If any is missing, it is handled here rather than worked around in the format.
+
+**The minimum supported Rust version comes from the dependencies rather than from this code.** The fleet measures the floor and declares it, rather than inferring it from the edition. Here the number is whatever the ZIP and TOML crates demand, which is above the rest of the fleet's and rises whenever either of them raises theirs. The manifest says so where it declares the number, because a floor inherited from a dependency moves without anyone here deciding that it should, and a consumer reading `rust-version` cannot otherwise tell the two cases apart.
 
 ---
 
@@ -104,7 +107,7 @@ The specification requires that members an implementation does not recognize sur
 
 Copying a member whose compression method the crate cannot decompress means copying its compressed bytes untouched, which is the third item in §3. It is what allows a container to be rewritten without being fully understood.
 
-**The library validates what it is about to write.** Valid TOML 1.0, UTF-8, both required keys present and of the right type, and `payload.file` naming a member the archive actually contains. A key that is present and is a string still describes nothing if it points at a member that is not there, and a caller free to edit the document is free to break it that way. Without these checks, `rewrite_metadata_bytes` is a way to produce a non-conformant container from the reference implementation. The usual argument for the opposite is that malformed containers are needed for tests, and §7 answers it: the conformance corpus is built upstream with `zip` and a shell script, deliberately not with this tool.
+**The library validates what it is about to write.** Valid TOML 1.1.0, UTF-8, both required keys present and of the right type, and `payload.file` naming a member the archive actually contains. A key that is present and is a string still describes nothing if it points at a member that is not there, and a caller free to edit the document is free to break it that way. Without these checks, `rewrite_metadata_bytes` is a way to produce a non-conformant container from the reference implementation. The usual argument for the opposite is that malformed containers are needed for tests, and §7 answers it: the conformance corpus is built upstream with `zip` and a shell script, deliberately not with this tool.
 
 ### 4.5 Errors
 
@@ -124,7 +127,7 @@ The specification requires that an implementation not assume it can read a conta
 
 Four verbs. Each does one thing the format supports.
 
-- `pack <payload> [--meta <file.toml>] [-o <out.slpc>]` — writes a container. Default output is the payload's name with `.slpc` appended, per the naming convention. With no `--meta`, generates metadata carrying only the two required keys.
+- `pack <payload> [--name <n>] [--meta <file.toml>] [-o <out.slpc>]` — writes a container. Default output is the payload's name with `.slpc` appended, per the naming convention. With no `--meta`, generates metadata carrying only the two required keys.
 - `unpack <file.slpc> [--dest <dir>] [--metadata]` — writes the payload. `--metadata` also writes `slipcase.metadata.toml`. Nothing else in the archive is written to disk, as the specification requires.
 - `info <file.slpc>` — prints the metadata.
 - `validate <file.slpc>` — reports conformance.
@@ -134,7 +137,8 @@ Behavior that is decided rather than obvious:
 - **Both required keys are set for the user**, by the library rather than by the CLI: `payload.file` from the payload's own filename, `slipcase_version` from the build. §4.3. A `--meta` file that sets `payload.file` to something else is an error rather than a silent overwrite.
 - **A payload whose filename cannot be a member name is rejected, not renamed.** A local file may contain characters that `payload.file` forbids; packing it would produce a container that cannot name its own payload.
 - **Neither `pack` nor `unpack` overwrites an existing file without `--force`.**
-- **Exit codes:** 0 success or conformant, 1 non-conformant, 2 usage error or I/O failure. A script needs to tell "the file is bad" from "I could not read the file."
+- **Exit codes:** 0 for success or conformance, 1 for bad input, 2 for a bad command line. The split is about whose mistake it is: 2 says re-read `--help`, 1 says go and look at the file. A non-conformant container and an unreadable one share 1 rather than splitting, because the distinction is already carried in the message and a wider code space returns less than it costs.
+- **`-` names standard input**, per the fleet convention, which is worth honoring because a caller writes `-` by reflex and a tool that reads it as a filename fails in a way that looks like the caller's own bug. `pack -` is the case the library's reader form exists for and streams without buffering, though it needs `--name`, since there is no filename to take `payload.file` from. The reading verbs cannot stream at all: a ZIP's central directory is at its end, so `info -`, `validate -`, and `unpack -` spool standard input to a temporary file and open that. The cost is the CLI's to pay rather than the library's, which keeps its `Read + Seek` bound and never spools for a caller who already has a file.
 - `--version`, `-V`, `--help`, `-h`, per the fleet convention.
 
 ---
