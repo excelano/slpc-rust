@@ -1,39 +1,7 @@
-//! The Rust implementation of the [slipcase](https://github.com/excelano/slipcase)
-//! container format.
-//!
-//! A container is a ZIP archive binding a single payload file to a TOML
-//! document describing it, so that the two travel as one file.
-//!
-//! ```no_run
-//! let mut c = slpc::Container::open("report.pdf.slpc")?;
-//! println!("{} holds {}", c.version(), c.payload_name());
-//! let mut payload = c.payload()?;
-//! std::io::copy(&mut payload, &mut std::io::stdout())?;
-//! # Ok::<(), slpc::Error>(())
-//! ```
-//!
-//! The specification lives in `excelano/slipcase` and is the authority on the
-//! format. This crate implements it and has no standing to change it.
-//!
-//! Writing is four free functions, because none of them takes or returns a
-//! container:
-//!
-//! ```no_run
-//! use toml_edit::DocumentMut;
-//! slpc::pack_file("report.pdf", DocumentMut::new(), std::fs::File::create("report.pdf.slpc")?)?;
-//! # Ok::<(), slpc::Error>(())
-//! ```
-//!
-//! The metadata argument is anything convertible into a `DocumentMut`, which is
-//! a document, a table, or, with `toml_edit`'s `serde` feature turned on by the
-//! caller, whatever `toml_edit::ser::to_document` makes of a struct or a map.
-//! Building metadata from nothing has no formatting to preserve, so there is
-//! nothing for that conversion to lose.
-//!
-//! # No vocabulary
-//!
-//! The two structural keys have typed accessors. Every other key is passed
-//! through unexamined, because there is nothing to examine it against.
+//! <!-- This crate's documentation is its README, so the two cannot disagree.
+//! The examples below are compiled and run by `cargo test` wherever they
+//! render: on docs.rs, on crates.io, and in the repository. -->
+#![doc = include_str!("../README.md")]
 //
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)

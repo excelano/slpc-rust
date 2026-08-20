@@ -3,10 +3,11 @@
 The command-line tool for [slipcase](https://github.com/excelano/slipcase), a
 container format that attaches metadata to a file.
 
-A `.slpc` file is a ZIP archive holding a payload file of any type together with
-a TOML metadata document describing it. The two become one file, so copying,
-moving, or sending the payload carries its metadata along.
+<!-- shared:blurb -->
+A `.slpc` file is a ZIP archive holding a payload file of any type together with a TOML metadata document describing it. The two become one file, so copying, moving, or sending the payload carries its metadata along.
+<!-- /shared:blurb -->
 
+<!-- shared:install -->
 ## Install
 
 ### Debian and Ubuntu
@@ -51,15 +52,18 @@ irm https://github.com/excelano/slpc-rust/releases/latest/download/slipcase-inst
 
 Every release also carries plain archives for macOS, Linux, and Windows on both
 Intel and ARM, each with a `.sha256` beside it.
+<!-- /shared:install -->
 
 ## Using it
 
+<!-- shared:verbs -->
 ```
 slipcase pack report.pdf --meta owner.toml     # writes report.pdf.slpc
 slipcase info report.pdf.slpc                  # prints the metadata, verbatim
 slipcase validate report.pdf.slpc              # exit 0 if conformant
 slipcase unpack report.pdf.slpc --dest ./out   # writes the payload and nothing else
 ```
+<!-- /shared:verbs -->
 
 Four verbs, each doing one thing the format supports. `pack` sets both required
 metadata keys itself, so a `--meta` file that contradicts either is refused
@@ -74,13 +78,15 @@ Wherever a file is read, `-` names standard input. `pack -` streams and needs
 first, because a ZIP's central directory is at the end of the file and there is
 no seeking in a pipe.
 
-Exit codes tell success from bad input, from a bad command line, from a
-container this build cannot judge — the difference between "go and look at the
-file" and "re-read `--help`". `slipcase --help` states the contract.
+<!-- shared:exit-codes -->
+Exit codes tell success from bad input, from a bad command line, from a container this build cannot judge. `slipcase --help` states the contract.
+<!-- /shared:exit-codes -->
 
 The library this is built on is [`slpc`](https://crates.io/crates/slpc), in the
-same repository. The specification lives in `excelano/slipcase` and is the
-authority on the format.
+same repository. 
+<!-- shared:authority -->
+The specification lives in `excelano/slipcase` and is the authority on the format.
+<!-- /shared:authority -->
 
 ## License
 

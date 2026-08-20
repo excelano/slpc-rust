@@ -19,6 +19,17 @@ jobs:
   ci:
     uses: excelano/.github/.github/workflows/rust-lib-ci.yml@main
 
+  # Three files are front doors to the same thing, so a few paragraphs are
+  # duplicated because the medium requires it. This fails when two copies stop
+  # agreeing, which is the only thing that keeps them from becoming paraphrases
+  # nobody can diff. Not in the shared workflow: no other repo in the fleet has
+  # the problem.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: ./check-shared-docs.py
+
   # The floor declared in Cargo.toml, built and tested rather than asserted.
   # It is not this code's floor — nothing written here needs more than the
   # edition implies — it is `zip`'s, which means it rises whenever `zip` raises
