@@ -1,8 +1,9 @@
 # slpc-rust — Design Document
 
-**Status:** implemented, unreleased. The library, the tool, and the release scaffolding are built and tested; nothing is on crates.io and no tag exists.
+**Status:** released. `slpc` and `slipcase` 0.1.1 are on crates.io, with binaries, Homebrew, and Debian packages. Not yet checked against the conformance corpus, which now exists.
 **Document version:** 2026-08-20
 **Implements:** slipcase specification 1.0
+**Section references:** `SPEC §2.3` is the specification in `excelano/slipcase`; a bare `§4.3` is this document. The two number their sections independently and both have a §3 and a §5, so neither is safe to read from context.
 
 ---
 
@@ -49,7 +50,7 @@ Four things here were assumptions about the ZIP crate rather than about the form
 
 **Symlink entries are detectable.** `unix_mode` reads the high half of the external attributes, which is where every archiver that can express a symlink puts one, whatever platform wrote the archive. An entry made on FAT has no such bits and the crate synthesizes an ordinary file mode for it, so the answer there is that it is not a symlink, which is both true and the safe direction to be wrong in.
 
-**A member can be copied without being decompressed**, but only through `by_index_raw`. The obvious `by_index` refuses a member whose compression method this build does not carry, which is exactly the member the rewrite path exists to preserve. Encrypted members behave the same way and copy the same way, so §2.5 of the specification is satisfiable rather than aspirational.
+**A member can be copied without being decompressed**, but only through `by_index_raw`. The obvious `by_index` refuses a member whose compression method this build does not carry, which is exactly the member the rewrite path exists to preserve. Encrypted members behave the same way and copy the same way, so SPEC §2.5 is satisfiable rather than aspirational.
 
 **A member can be written from a source of unknown length**, and `ZipWriter::new_stream` does it over a writer that implements only `Write`, emitting a data descriptor. The writing half of the library therefore needs no `Seek` bound at all, which is a smaller demand on a caller than the design assumed.
 
@@ -91,7 +92,7 @@ The container is `mut` because the archive lends out one member at a time, which
 
 The document is the ordinary one, and it behaves as a map: indexable, iterable, and open to insertion and removal. A caller who wants to read the metadata into a table, change a key, and write it back does that on the document and keeps the comments, key order, and whitespace that §3 chose this representation to keep. A second, plain-map representation with a write path attached would offer a convenient way to discard all of that without noticing, so there is not one.
 
-The bytes are for a caller who wants a different parser, a schema validator, or a hash. They are the member as stored, so a container can be re-emitted byte for byte, which no other path promises; the specification defines no canonical serialization, and this is the only way to be sure nothing moved. A signature mechanism, whenever one arrives — §5 of the specification leaves it out of this version — will need those bytes rather than a re-serialization of them. Reading them buffers, which the rule above permits: that rule is about payloads of arbitrary size, not about the metadata member.
+The bytes are for a caller who wants a different parser, a schema validator, or a hash. They are the member as stored, so a container can be re-emitted byte for byte, which no other path promises; the specification defines no canonical serialization, and this is the only way to be sure nothing moved. A signature mechanism, whenever one arrives — SPEC §5 leaves it out of this version — will need those bytes rather than a re-serialization of them. Reading them buffers, which the rule above permits: that rule is about payloads of arbitrary size, not about the metadata member.
 
 **Building metadata is not the same operation as changing it.** A read-modify-write has formatting to preserve and goes through the document. Building metadata from nothing has none, and a caller generating it out of a database or a build system would rather hand over a struct or a map than assemble a document by hand, so both packing forms accept anything convertible into one, serde included. The conversion cannot lose anything, because nothing arriving that way carried anything to lose.
 
