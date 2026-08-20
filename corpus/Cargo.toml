@@ -1,0 +1,17 @@
+[package]
+name = "corpus"
+description = "Run the slipcase conformance corpus against this workspace"
+# Never published and never released, so it has no version to carry. It is in
+# the workspace to be built and run, not to be shipped: `dist-workspace.toml`
+# names its members explicitly and this is not one of them.
+version = "0.0.0"
+publish = false
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+slpc.workspace = true
+clap = { version = "4.6", features = ["derive"] }
