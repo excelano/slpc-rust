@@ -48,6 +48,13 @@ mod metadata;
 mod name;
 mod write;
 
+/// The TOML implementation this crate is built on, re-exported.
+///
+/// [`DocumentMut`](toml_edit::DocumentMut) appears in this crate's signatures,
+/// so a caller needs the same version of it. Taking it from here rather than
+/// from a dependency of their own is what stops the two from skewing.
+pub use toml_edit;
+
 pub use container::Container;
 pub use error::{Error, Malformed, NameError, Result, Unsupported};
 pub use name::check_payload_name;
