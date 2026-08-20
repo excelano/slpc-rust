@@ -27,8 +27,9 @@ Wherever a file is read, `-` names standard input. `pack -` streams and needs
 first, because a ZIP's central directory is at the end of the file and there is
 no seeking in a pipe.
 
-Exit codes are 0 for success or conformance, 1 for bad input, and 2 for a bad
-command line: 2 says re-read `--help`, 1 says go and look at the file.
+Exit codes tell success from bad input, from a bad command line, from a
+container this build cannot judge — the difference between "go and look at the
+file" and "re-read `--help`". `slipcase --help` states the contract.
 
 The library this is built on is [`slpc`](https://crates.io/crates/slpc), in the
 same repository. The specification lives in `excelano/slipcase` and is the

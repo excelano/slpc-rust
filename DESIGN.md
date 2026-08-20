@@ -48,7 +48,7 @@ Four things here were assumptions about the ZIP crate rather than about the form
 
 **Member names are decoded per general purpose bit 11 by the crate itself**, UTF-8 when the flag is set and CP437 otherwise, which is what the specification requires for matching `payload.file`. The CP437 table is total over all 256 bytes. This is work the Go implementation has to do by hand and this one does not.
 
-**Symlink entries are detectable.** `unix_mode` reads the high half of the external attributes, which is where every archiver that can express a symlink puts one, whatever platform wrote the archive. An entry made on FAT has no such bits and the crate synthesizes an ordinary file mode for it, so the answer there is that it is not a symlink, which is both true and the safe direction to be wrong in.
+**An entry's type is readable.** `unix_mode` reads the high half of the external attributes, which is where every archiver that can express something other than an ordinary file puts it, whatever platform wrote the archive. That is all the crate can tell us; which types SPEC §2.3 excludes is read from the specification. An entry made on FAT carries no such bits and the crate synthesizes an ordinary file mode, so the answer there is that it is a regular file, which is both true and the safe direction to be wrong in.
 
 **A member can be copied without being decompressed**, but only through `by_index_raw`. The obvious `by_index` refuses a member whose compression method this build does not carry, which is exactly the member the rewrite path exists to preserve. Encrypted members behave the same way and copy the same way, so SPEC §2.5 is satisfiable rather than aspirational.
 
@@ -118,9 +118,9 @@ There is no bare `pack`. The two forms differ in more than convenience — one v
 
 The specification requires that members an implementation does not recognize survive a rewrite. `rewrite_metadata` copies every member through and substitutes only `slipcase.metadata.toml`, which is why it is a free function over a reader and a writer rather than a mutable container that gets saved: a rewrite that streams cannot accidentally hold the payload in memory, and a container is never partly in RAM and partly on disk.
 
-Copying a member whose compression method the crate cannot decompress means copying its compressed bytes untouched, which is the third item in §3. It is what allows a container to be rewritten without being fully understood.
+Copying a member whose compression method the crate cannot decompress means copying its compressed bytes untouched, which §3 confirmed the crate will do. It is what allows a container to be rewritten without being fully understood.
 
-**The library validates what it is about to write.** Valid TOML 1.1.0, UTF-8, both required keys present and of the right type, and `payload.file` naming a member the archive actually contains. A key that is present and is a string still describes nothing if it points at a member that is not there, and a caller free to edit the document is free to break it that way. Without these checks, `rewrite_metadata_bytes` is a way to produce a non-conformant container from the reference implementation. The usual argument for the opposite is that malformed containers are needed for tests, and §7 answers it: the conformance corpus is built upstream, deliberately not with this tool.
+**The library validates what it is about to write, against the rules it reads by.** Metadata is parsed and the payload located by the same code the read path uses, so what this writes is what it would accept back, and neither half can drift from the other or from a specification that grows a rule. A key that is present and is a string still describes nothing if it points at a member that is not there, and a caller free to edit the document is free to break it that way. Without these checks, `rewrite_metadata_bytes` is a way to produce a non-conformant container from the reference implementation. The usual argument for the opposite is that malformed containers are needed for tests, and §7 answers it: the conformance corpus is built upstream, deliberately not with this tool.
 
 ### 4.5 Errors and verdicts
 
@@ -170,10 +170,10 @@ Two layers.
 
 ## 7. Build order
 
-1. **Read path** — open, parse, validate, expose the payload as a stream. Carries the name-matching rule from §3, including the guard against a lossily decoded name.
-2. **Write path** — packing from a reader and from a path, and rewriting a container's metadata with unknown keys and unknown members preserved. Copies members through `by_index_raw` and writes unknown-length ones through `new_stream`, per §3.
+1. **Read path** — open, parse, validate, expose the payload as a stream. Settles how names are decoded and compared, which everything else then reuses.
+2. **Write path** — packing from a reader and from a path, and rewriting a container's metadata with unknown keys and unknown members preserved.
 3. **CLI** over both.
-4. **Wire in the conformance corpus** once the specification repository has one, keeping the generated fixtures for cases it does not cover.
+4. **Wire in the conformance corpus**, keeping the generated fixtures for the cases it does not cover.
 
 The corpus is built upstream rather than with this implementation, and a corpus produced by the tool it validates proves nothing. How it is built is the specification repository's business to describe.
 

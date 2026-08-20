@@ -16,7 +16,7 @@ slipcase is a CLI that runs locally on your machine, and `slpc` is the library b
 
 Two things are worth stating because they are the ones a container format could plausibly get wrong.
 
-**Unpacking writes the payload and nothing else.** `payload.file` is checked against the specification's rules before it is used: it must be a plain filename, never `.` or `..`, and never contain `/`, `\`, or `:`. A name that breaks any of those is rejected rather than repaired, so joining it to a destination directory cannot leave that directory. Members of the archive other than the payload and the metadata document are never written to disk, whatever they are named. `--metadata` adds exactly one more file, `slipcase.metadata.toml`, in the same destination.
+**Unpacking writes the payload and nothing else.** `payload.file` is a plain filename and never a path, which the specification states as a list of exclusions in its section 2.3 and this implementation checks in full before the name is used. A name breaking any of them is rejected rather than repaired, so joining it to a destination directory cannot leave that directory. The payload member must also be a regular file entry, so a symbolic link, a directory, or a device cannot be written in a payload's place. Members of the archive other than the payload and the metadata document are never written to disk, whatever they are named. `--metadata` adds one more file, `slipcase.metadata.toml`, in the same destination.
 
 **A payload is never executed, opened, or handed to another program.** The tool has no verb that runs anything. Nothing here inspects a payload's type or acts on it, and a container that names its payload `report.pdf` gets no different treatment from one that names it `setup.exe`.
 

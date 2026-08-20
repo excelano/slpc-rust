@@ -20,21 +20,15 @@ slipcase validate report.pdf.slpc              # exit 0 if conformant
 slipcase unpack report.pdf.slpc --dest ./out   # writes the payload and nothing else
 ```
 
-Wherever a file is read, `-` names standard input. Exit codes are 0 for success or conformance, 1 for bad input, and 2 for a bad command line.
+Wherever a file is read, `-` names standard input. Exit codes tell success from bad input, from a bad command line, from a container this build cannot judge. `slipcase --help` states the contract.
 
 ## The library
 
-```rust
-let mut c = slpc::Container::open("report.pdf.slpc")?;
-println!("{} holds {}", c.version(), c.payload_name());
-std::io::copy(&mut c.payload()?, &mut std::io::stdout())?;
-```
-
-The payload is a stream and is never read into memory. Metadata is exposed as a document that keeps comments, key order, and whitespace across a rewrite, and as the member's bytes for a caller who wants a different parser or a hash.
+The payload is a stream and is never read into memory. Metadata is exposed as a document that keeps comments, key order, and whitespace across a rewrite, and as the member's bytes for a caller who wants a different parser or a hash. Worked examples are in [the documentation](https://docs.rs/slpc), which is compiled and tested rather than transcribed.
 
 ## This repository
 
-`DESIGN.md` records the design and the reasoning behind each decision. `RELEASING.md` is the release loop.
+`DESIGN.md` records the design and the reasoning behind each decision.
 
 ## License
 
