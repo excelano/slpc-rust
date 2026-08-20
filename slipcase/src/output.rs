@@ -32,10 +32,12 @@ enum To {
         tmp: NamedTempFile,
         path: PathBuf,
         force: bool,
-        /// Taken from the file being replaced, where there is one. A
-        /// temporary file is created private to its owner, and renaming one
-        /// over a container would otherwise narrow it to 0600.
-        mode: Option<Permissions>,
+        /// What the finished file should be readable by. A temporary file is
+        /// created private to its owner, which is right while it is a temporary
+        /// file and wrong the moment it is renamed into place, so this is put
+        /// on before the rename. It comes from the file being replaced where
+        /// there is one, and from [`new_file_mode`] where there is not.
+        mode: Permissions,
     },
     /// Spooled, then copied out at the end. Unlinked as soon as it is created,
     /// so it leaves nothing behind however this process ends.
@@ -89,6 +91,10 @@ impl Destination {
         }
         let tmp =
             NamedTempFile::new_in(dir).context(format!("cannot write into {}", dir.display()))?;
+        let mode = match mode {
+            Some(m) => m,
+            None => new_file_mode(tmp.path())?,
+        };
         Ok(Self {
             to: To::File {
                 tmp,
@@ -156,11 +162,9 @@ impl Destination {
             } => (tmp, path, force, mode),
         };
 
-        if let Some(mode) = mode {
-            tmp.as_file()
-                .set_permissions(mode)
-                .context(format!("cannot set the permissions of {}", path.display()))?;
-        }
+        tmp.as_file()
+            .set_permissions(mode)
+            .context(format!("cannot set the permissions of {}", path.display()))?;
 
         let outcome = if force {
             tmp.persist(&path).map_err(|e| e.error)
@@ -179,4 +183,39 @@ impl Destination {
             ))),
         }
     }
+}
+
+/// The permissions a file created the ordinary way beside `near` would have.
+///
+/// Measured rather than asked for. What a new file gets is 0666 with the
+/// process umask taken out of it, and there is no way to read the umask without
+/// setting it, which needs a C call and the `unsafe` this crate forbids. So a
+/// file is created the ordinary way, asked what it got, and removed. It costs
+/// three system calls once per run, and it is the difference between `slipcase
+/// pack` handing back a container the umask decided who can read and one only
+/// its author can.
+///
+/// The probe sits beside the temporary file and borrows its name, which is
+/// already unique to this process, so nothing else can be creating it.
+fn new_file_mode(near: &Path) -> Result<Permissions> {
+    let mut name = near.as_os_str().to_owned();
+    name.push(".mode");
+    let probe = PathBuf::from(name);
+
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .context(format!("cannot create {}", probe.display()))?;
+    let mode = f
+        .metadata()
+        .context(format!(
+            "cannot read the permissions of {}",
+            probe.display()
+        ))
+        .map(|m| m.permissions());
+    drop(f);
+
+    std::fs::remove_file(&probe).context(format!("cannot remove {}", probe.display()))?;
+    mode
 }

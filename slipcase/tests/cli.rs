@@ -560,3 +560,69 @@ fn repack_through_a_symlink_changes_the_container_and_not_the_link() {
     );
     assert!(out(&s.run(&["info", "c.slpc"])).contains("file = \"b.txt\""));
 }
+
+// --- what the files come out as -------------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn what_it_writes_is_readable_by_whoever_the_umask_said() {
+    // Against a file this test process creates the ordinary way, rather than
+    // against a number: the answer depends on the umask, and hard-coding 0644
+    // would pass under one and be wrong under another. A container is a file
+    // like any other, and it should come out like one.
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+
+    let s = Sandbox::new();
+    let reference = s.file("reference.txt", b"what an ordinary file gets");
+    let want = mode(&reference);
+
+    s.file("a.txt", b"x");
+    assert_eq!(code(&s.run(&["pack", "a.txt"])), 0);
+    assert_eq!(
+        mode(&s.path().join("a.txt.slpc")),
+        want,
+        "a packed container"
+    );
+
+    std::fs::remove_file(s.path().join("a.txt")).unwrap();
+    assert_eq!(code(&s.run(&["unpack", "a.txt.slpc", "--metadata"])), 0);
+    assert_eq!(mode(&s.path().join("a.txt")), want, "an unpacked payload");
+    assert_eq!(
+        mode(&s.path().join("slipcase.metadata.toml")),
+        want,
+        "an unpacked metadata member"
+    );
+
+    // A repack takes the container's own permissions instead, since it is
+    // replacing a file rather than creating one.
+    std::fs::set_permissions(
+        s.path().join("a.txt.slpc"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    s.file("b.txt", b"y");
+    assert_eq!(
+        code(&s.run(&["repack", "--payload", "b.txt", "a.txt.slpc"])),
+        0
+    );
+    assert_eq!(
+        mode(&s.path().join("a.txt.slpc")),
+        0o600,
+        "a repacked container"
+    );
+}
+
+#[test]
+fn the_permission_probe_leaves_nothing_behind() {
+    let s = Sandbox::new();
+    s.file("a.txt", b"x");
+    assert_eq!(code(&s.run(&["pack", "a.txt"])), 0);
+
+    let mut left: Vec<String> = std::fs::read_dir(s.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["a.txt", "a.txt.slpc"]);
+}
