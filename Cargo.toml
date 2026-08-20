@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["slpc"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["David M. Anderson"]
+license = "MIT"
+repository = "https://github.com/excelano/slpc-rust"
+# Measured, not inferred: 1.88 builds and passes the suite. The floor is not
+# this code's — edition 2021 would imply 1.56 and nothing written here needs
+# more — it is `zip`'s, which declares 1.88, above `toml_edit`'s 1.85 and every
+# other crate in the tree. That makes it a number nobody here chose and one
+# that rises whenever a dependency raises its own, so the msrv job in ci.yml
+# builds at it rather than trusting this line. Raise it here and there together.
+rust-version = "1.88"

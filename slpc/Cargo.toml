@@ -1,0 +1,28 @@
+[package]
+name = "slpc"
+description = "Read, write, and validate slipcase containers: a ZIP holding a payload file and the TOML metadata that describes it"
+homepage = "https://github.com/excelano/slipcase"
+readme = "README.md"
+keywords = ["slipcase", "container", "metadata", "zip", "toml"]
+categories = ["filesystem", "encoding"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Default features link libbz2 and libzstd through bzip2-sys and zstd-sys. The
+# flate2 backend is named directly rather than through the `deflate` feature,
+# which would also pull zopfli for a compression level nothing here asks for.
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+toml_edit = "0.25"
+
+[dev-dependencies]
+# Already in the tree under zip; the tests build archives by hand and need it
+# to stamp their own headers.
+crc32fast = "1.5"
+# The suite builds one deflated fixture with an ordinary writer, because
+# compressing by hand would test the test rather than the library.
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }

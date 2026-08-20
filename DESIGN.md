@@ -65,11 +65,11 @@ A fifth assumption sat inside the first, unstated, and that one does not hold: t
 Reading needs `Read + Seek`, because a ZIP's central directory is at the end of the file. The public surface is small:
 
 ```rust
-let c = Container::open("report.pdf.slpc")?;   // also: Container::read(reader)
+let mut c = Container::open("report.pdf.slpc")?;   // also: Container::read(reader)
 c.version();          // the slipcase_version as written
 c.payload_name();     // the value of payload.file
-c.metadata();         // &Document — the whole TOML document, unknown keys intact
-c.metadata_mut();     // &mut Document — changed in place
+c.metadata();         // &DocumentMut — the whole TOML document, unknown keys intact
+c.metadata_mut();     // &mut DocumentMut — changed in place
 c.metadata_bytes();   // &[u8] — the metadata member as stored, byte for byte
 let mut r = c.payload()?;   // impl Read — streams, never buffered whole
 
@@ -80,7 +80,7 @@ Container::rewrite_metadata_bytes(reader, &bytes, writer)?;
 slpc::validate(reader)?;
 ```
 
-**The payload is never read into memory.** Payloads are arbitrary files of arbitrary size, and a library that returns `Vec<u8>` decides for its caller that the file fits in RAM.
+The container is `mut` because the archive lends out one member at a time, which is the ZIP crate's shape rather than a choice made here.\n\n**The payload is never read into memory.** Payloads are arbitrary files of arbitrary size, and a library that returns `Vec<u8>` decides for its caller that the file fits in RAM.
 
 **No vocabulary.** The library exposes the metadata document and typed accessors for the two structural keys. It defines no others, validates no others, and has no opinion on what any of them mean.
 

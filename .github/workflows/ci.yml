@@ -1,0 +1,31 @@
+name: ci
+
+# The checks themselves live in excelano/.github, so every Rust repo in the
+# fleet runs the same ones and a correction reaches all of them at once. What
+# stays here is when to run: that is this repo's business, the policy is the
+# fleet's.
+#
+# This repository calls the library policy rather than the binary one, because
+# `slpc` is published and owes its consumers the docs and packaging checks the
+# library workflow adds. The workspace holds the CLI as well, and the library
+# checks are a superset of the binary ones, so one call covers both.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: excelano/.github/.github/workflows/rust-lib-ci.yml@main
+
+  # The floor declared in Cargo.toml, built and tested rather than asserted.
+  # It is not this code's floor — nothing written here needs more than the
+  # edition implies — it is `zip`'s, which means it rises whenever `zip` raises
+  # its own and nobody here decides that it should. Cargo does not warn on a
+  # rust-version it has quietly outgrown, so the promise needs a job. Raise the
+  # number here and in Cargo.toml together; they are one statement written twice.
+  msrv:
+    uses: excelano/.github/.github/workflows/rust-lib-ci.yml@main
+    with:
+      toolchain: "1.88"

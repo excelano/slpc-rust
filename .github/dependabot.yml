@@ -1,0 +1,33 @@
+# Dependabot keeps Cargo and GitHub Actions dependencies current so security
+# fixes show up as PRs rather than slipping past.
+#
+# Each ecosystem's bumps are grouped into a single weekly PR so they share one
+# lockfile change instead of stacking conflicting updates.
+#
+# A `zip` bump is the one to read rather than merge on green: it sets this
+# workspace's minimum supported Rust version, so raising it is a change to what
+# this crate promises its consumers. See the comment in Cargo.toml.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      cargo:
+        patterns:
+          - "*"
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns:
+          - "*"
