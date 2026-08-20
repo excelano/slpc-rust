@@ -15,3 +15,10 @@ repository = "https://github.com/excelano/slpc-rust"
 # that rises whenever a dependency raises its own, so the msrv job in ci.yml
 # builds at it rather than trusting this line. Raise it here and there together.
 rust-version = "1.88"
+
+# cargo-dist builds release binaries under this profile. Thin LTO rather than
+# fat: the link is a fraction of the time and the size difference on a binary
+# this small does not pay for the rest.
+[profile.dist]
+inherits = "release"
+lto = "thin"

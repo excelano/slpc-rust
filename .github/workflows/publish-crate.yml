@@ -1,0 +1,54 @@
+name: Publish to crates.io
+
+# Fires on the same version tags cargo-dist's release runs on, and can be run by
+# hand. Publishing is independent of the release build -- `cargo publish`
+# compiles and uploads from source -- so the two run in parallel.
+#
+# The step is token-gated: it skips cleanly, with no failed run, unless a
+# CRATES_IO_TOKEN secret is available (repo- or org-level).
+#
+# This workflow is the repository's own rather than the fleet's shared one,
+# because the fleet's runs a bare `cargo publish`, which a workspace root with
+# two members rejects. The two crates are named, and in order: crates.io must
+# already hold the version of `slpc` that `slipcase` asks for.
+on:
+  push:
+    tags:
+      - '**[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check for a crates.io token
+        id: token
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: echo "present=${CRATES_IO_TOKEN:+true}" >> "$GITHUB_OUTPUT"
+      - name: Publish
+        if: steps.token.outputs.present == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name=="slpc") | .version')
+          echo "publishing $version"
+          # A crate already at this version is skipped rather than failing the
+          # run, so re-running after a half-finished publish finishes the job
+          # instead of stopping on `already exists`. Versions are immutable;
+          # nothing here can overwrite one.
+          for crate in slpc slipcase; do
+            if curl -sfL "https://crates.io/api/v1/crates/$crate/$version" -o /dev/null; then
+              echo "$crate $version is already on crates.io, skipping"
+            else
+              # cargo publish waits for the index to catch up before returning,
+              # which is what lets the next crate in this loop resolve it.
+              cargo publish -p "$crate"
+            fi
+          done

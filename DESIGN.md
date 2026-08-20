@@ -1,7 +1,7 @@
 # slpc-rust — Design Document
 
-**Status:** design draft. Nothing built.
-**Document version:** draft, 2026-08-20
+**Status:** implemented, unreleased. The library, the tool, and the release scaffolding are built and tested; nothing is on crates.io and no tag exists.
+**Document version:** 2026-08-20
 **Implements:** slipcase specification 1.0
 
 ---

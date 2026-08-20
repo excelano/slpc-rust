@@ -30,3 +30,20 @@ tempfile = "3.27"
 [dev-dependencies]
 # Sandbox directories for the tests that run the binary.
 tempfile = "3.27"
+
+[package.metadata.deb]
+maintainer = "David M. Anderson <david.anderson@excelano.com>"
+# One line per sentence: cargo-deb re-wraps this, and a source line broken
+# mid-sentence comes out broken in `apt show`.
+extended-description = """
+slipcase attaches metadata to a file without changing it. A .slpc container is a ZIP archive holding one payload file of any type together with a TOML document describing it, so that copying, moving, or sending the payload carries its metadata along.
+Four verbs: pack, unpack, info, and validate. The format is specified independently of this tool, and ordinary ZIP utilities can read a container without it."""
+section = "utils"
+priority = "optional"
+depends = "libc6, libgcc-s1"
+# No `assets` list. cargo-deb finds the binary, README.md, and the licence on
+# its own, and an explicit `target/release/slipcase` would be wrong on any box
+# whose cargo config moves the target directory — which is every box in this
+# fleet, and not CI. A path that is right in one place and silently wrong in the
+# other is worse than no path.
+license-file = ["../LICENSE", "0"]
