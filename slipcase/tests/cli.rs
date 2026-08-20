@@ -246,6 +246,46 @@ fn a_missing_file_is_bad_input_and_not_a_bad_command_line() {
     assert!(err(&o).contains("absent.slpc"), "{}", err(&o));
 }
 
+/// A container declaring another version, which the library refuses to write.
+fn future_container() -> Vec<u8> {
+    use std::io::Write;
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    w.start_file("slipcase.metadata.toml", opts).unwrap();
+    w.write_all(b"slipcase_version = \"9.4\"\n\n[payload]\nfile = \"a.txt\"\n")
+        .unwrap();
+    w.start_file("a.txt", opts).unwrap();
+    w.write_all(b"from the future\n").unwrap();
+    w.finish().unwrap().into_inner()
+}
+
+#[test]
+fn a_container_this_build_cannot_speak_to_is_neither_conformant_nor_not() {
+    // SPEC 2.4 puts another version outside the conformance question rather
+    // than failing it, and SPEC 3 forbids answering either way. Exit 3 is how
+    // that is said to a caller branching on the status.
+    let s = Sandbox::new();
+    s.file("future.slpc", &future_container());
+
+    let o = s.run(&["validate", "future.slpc"]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(err(&o).contains("9.4"), "{}", err(&o));
+    assert!(
+        !err(&o).to_lowercase().contains("not conformant"),
+        "must not call it non-conformant: {}",
+        err(&o)
+    );
+}
+
+#[test]
+fn a_rejected_container_and_a_missing_one_are_not_exit_three() {
+    let s = Sandbox::new();
+    s.file("not.slpc", b"not a ZIP at all");
+    assert_eq!(code(&s.run(&["validate", "not.slpc"])), 1);
+    assert_eq!(code(&s.run(&["validate", "absent.slpc"])), 1);
+}
+
 // --- the command line itself -----------------------------------------------
 
 #[test]

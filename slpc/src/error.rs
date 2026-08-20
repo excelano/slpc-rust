@@ -20,6 +20,8 @@ pub enum NameError {
     Separator(char),
     /// The name contains a colon, which some platforms read as rooting a path.
     Colon,
+    /// The name contains a character in U+0000 to U+001F, or U+007F.
+    ControlCharacter(char),
     /// The name is the metadata member's.
     ReservedForMetadata,
     /// The name is not UTF-8, so no TOML string can hold it.
@@ -33,6 +35,7 @@ impl fmt::Display for NameError {
             Self::Relative => f.write_str("payload.file is `.` or `..` (SPEC 2.3)"),
             Self::Separator(c) => write!(f, "payload.file contains {c:?}, so it is a path rather than a filename (SPEC 2.3)"),
             Self::Colon => f.write_str("payload.file contains ':', which is read as rooting a path on some platforms (SPEC 2.3)"),
+            Self::ControlCharacter(c) => write!(f, "payload.file contains U+{:04X}, a control character (SPEC 2.3)", *c as u32),
             Self::ReservedForMetadata => write!(f, "payload.file is {:?}, which names the metadata member (SPEC 2.3)", crate::METADATA_MEMBER),
             Self::NotUtf8 => f.write_str("the name is not UTF-8, and payload.file is a TOML string (SPEC 2.2)"),
         }
@@ -67,8 +70,30 @@ pub enum Malformed {
     PayloadName(NameError),
     /// `payload.file` names no member of the archive (SPEC 2.1).
     NoPayloadMember(String),
-    /// The payload member is a symbolic link entry (SPEC 2.3).
-    PayloadIsSymlink(String),
+    /// The payload member is not a regular file entry (SPEC 2.3).
+    ///
+    /// Directory entries, symbolic links, and every other entry type a ZIP
+    /// implementation can record are excluded. An entry carrying no type
+    /// information at all is taken to be a regular file, since there is nothing
+    /// to say otherwise and ordinary archives are full of them.
+    PayloadNotARegularFile {
+        /// The member named by `payload.file`.
+        name: String,
+        /// What the archive says the entry is.
+        kind: EntryKind,
+    },
+    /// More than one member is named `slipcase.metadata.toml` (SPEC 2.1).
+    DuplicateMetadataMember(usize),
+    /// More than one member's name equals `payload.file` (SPEC 2.1).
+    ///
+    /// Which one is the payload would depend on the order members sit in, and
+    /// SPEC 3 forbids depending on that.
+    DuplicatePayloadMember {
+        /// The name they share.
+        name: String,
+        /// How many members carry it.
+        count: usize,
+    },
     /// A file on disk is called something `payload.file` cannot express (SPEC 2.3).
     ///
     /// The payload is rejected rather than renamed. A container that cannot
@@ -118,9 +143,18 @@ impl fmt::Display for Malformed {
                 f,
                 "payload.file names {n:?}, which the archive does not contain (SPEC 2.1)"
             ),
-            Self::PayloadIsSymlink(n) => write!(
+            Self::PayloadNotARegularFile { name, kind } => write!(
                 f,
-                "the payload member {n:?} is a symbolic link entry (SPEC 2.3)"
+                "the payload member {name:?} is {kind} rather than a regular file entry (SPEC 2.3)"
+            ),
+            Self::DuplicateMetadataMember(n) => write!(
+                f,
+                "{n} members are named {:?}; a container has exactly one (SPEC 2.1)",
+                crate::METADATA_MEMBER
+            ),
+            Self::DuplicatePayloadMember { name, count } => write!(
+                f,
+                "{count} members are named {name:?}; a container has exactly one payload (SPEC 2.1)"
             ),
             Self::PayloadPathName { path, cause } => write!(
                 f,
@@ -255,3 +289,49 @@ impl From<zip::result::ZipError> for Error {
 
 /// The library's result type.
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// What kind of entry an archive says a member is.
+///
+/// Taken from the file-type bits of the member's external attributes, which is
+/// the only place a ZIP archive records this. An archive written on a system
+/// with no such notion carries no bits, and [`EntryKind::Regular`] is the
+/// answer for want of any other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EntryKind {
+    /// An ordinary file, or an entry that does not say.
+    Regular,
+    /// A directory.
+    Directory,
+    /// A symbolic link.
+    Symlink,
+    /// Something else the file-type bits name: a FIFO, a socket, a device.
+    Other(u32),
+}
+
+impl EntryKind {
+    /// Read the file-type bits of a unix mode.
+    pub(crate) fn from_mode(mode: Option<u32>) -> Self {
+        // The mask and values are POSIX's S_IFMT and friends. They are written
+        // out rather than taken from libc because this crate has no C
+        // dependency and these five numbers have not moved since the 1970s.
+        const FMT: u32 = 0o170_000;
+        match mode.map(|m| m & FMT) {
+            None | Some(0 | 0o100_000) => Self::Regular,
+            Some(0o040_000) => Self::Directory,
+            Some(0o120_000) => Self::Symlink,
+            Some(other) => Self::Other(other >> 12),
+        }
+    }
+}
+
+impl fmt::Display for EntryKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Regular => f.write_str("a regular file"),
+            Self::Directory => f.write_str("a directory entry"),
+            Self::Symlink => f.write_str("a symbolic link entry"),
+            Self::Other(t) => write!(f, "an entry of type {t:#o}"),
+        }
+    }
+}

@@ -29,6 +29,12 @@ pub fn check_payload_name(name: &str) -> Result<(), NameError> {
     if name.contains(':') {
         return Err(NameError::Colon);
     }
+    // U+0000 to U+001F and U+007F. `char::is_control` is broader than that — it
+    // covers the C1 range too — so it is narrowed to ASCII, which is what the
+    // specification excludes.
+    if let Some(c) = name.chars().find(|c| c.is_ascii() && c.is_control()) {
+        return Err(NameError::ControlCharacter(c));
+    }
     if name == METADATA_MEMBER {
         return Err(NameError::ReservedForMetadata);
     }
@@ -78,6 +84,30 @@ mod tests {
         ] {
             assert_eq!(check_payload_name(n), Ok(()), "{n:?}");
         }
+    }
+
+    #[test]
+    fn a_double_dot_is_only_excluded_as_the_whole_name() {
+        // SPEC 2.3 excludes the names `.` and `..`, not the sequence wherever it
+        // appears. A name that cannot express a path cannot express a traversal,
+        // so `a..b` needs no defending against.
+        for n in ["a..b", "..leading", "trailing..", "...."] {
+            assert_eq!(check_payload_name(n), Ok(()), "{n:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_every_control_character() {
+        for c in (0u8..=0x1f).chain(std::iter::once(0x7f)) {
+            let name = format!("rep{}ort.pdf", c as char);
+            assert_eq!(
+                check_payload_name(&name),
+                Err(NameError::ControlCharacter(c as char)),
+                "U+{c:04X}"
+            );
+        }
+        // A character that merely looks exotic is not a control character.
+        assert_eq!(check_payload_name("rep\u{200b}ort.pdf"), Ok(()));
     }
 
     #[test]

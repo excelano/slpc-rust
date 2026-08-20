@@ -29,6 +29,10 @@ tempfile = "3.27"
 [dev-dependencies]
 # Sandbox directories for the tests that run the binary.
 tempfile = "3.27"
+# A container declaring a version this build does not implement cannot be
+# written by the library, which refuses on purpose, so the test that checks how
+# the tool reports one builds it directly.
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [package.metadata.deb]
 maintainer = "David M. Anderson <david.anderson@excelano.com>"

@@ -64,8 +64,13 @@ impl Member {
     }
 
     /// Mark the entry a symbolic link.
-    pub fn symlink(mut self) -> Self {
-        self.external_attributes = 0o120_777 << 16;
+    pub fn symlink(self) -> Self {
+        self.with_mode(0o120_777)
+    }
+
+    /// Set the unix mode, file-type bits included.
+    pub fn with_mode(mut self, mode: u32) -> Self {
+        self.external_attributes = mode << 16;
         self
     }
 
@@ -145,7 +150,19 @@ pub fn raw_zip(members: &[Member]) -> Vec<u8> {
 /// escaped here. A fixture that writes a bad name is testing the library, and a
 /// fixture that writes bad TOML by accident is testing nothing.
 pub fn metadata(payload_file: &str) -> String {
-    let escaped = payload_file.replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped: String = payload_file
+        .chars()
+        .map(|c| match c {
+            '\\' => "\\\\".to_string(),
+            '"' => "\\\"".to_string(),
+            // A control character cannot sit raw in a TOML basic string, so a
+            // real container carrying one in payload.file escapes it and the
+            // fixture has to as well. The name still holds the character; only
+            // its spelling in the document changes.
+            c if c.is_ascii() && c.is_control() => format!("\\u{:04X}", c as u32),
+            c => c.to_string(),
+        })
+        .collect();
     format!("slipcase_version = \"1.0\"\n\n[payload]\nfile = \"{escaped}\"\n")
 }
 

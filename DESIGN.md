@@ -1,6 +1,6 @@
 # slpc-rust — Design Document
 
-**Status:** released. `slpc` and `slipcase` 0.1.1 are on crates.io, with binaries, Homebrew, and Debian packages. Not yet checked against the conformance corpus, which now exists.
+**Status:** released. 0.1.1 is on crates.io, with binaries, Homebrew, and Debian packages. 0.2.0 is built and unreleased: it agrees with the conformance corpus on 75 of 76 cases, the exception being a corpus bug.
 **Document version:** 2026-08-20
 **Implements:** slipcase specification 1.0
 **Section references:** `SPEC §2.3` is the specification in `excelano/slipcase`; a bare `§4.3` is this document. The two number their sections independently and both have a §3 and a §5, so neither is safe to read from context.
@@ -54,7 +54,11 @@ Four things here were assumptions about the ZIP crate rather than about the form
 
 **A member can be written from a source of unknown length**, and `ZipWriter::new_stream` does it over a writer that implements only `Write`, emitting a data descriptor. The writing half of the library therefore needs no `Seek` bound at all, which is a smaller demand on a caller than the design assumed.
 
-A fifth assumption sat inside the first, unstated, and that one does not hold: that a name the crate hands back can be trusted to be the name. When bit 11 is set but the name bytes are not valid UTF-8, the crate substitutes U+FFFD rather than reporting the problem, and nothing in the public API reports which decoding it chose — `ZipArchive` hands back no reference to its reader, so the flag word cannot be re-read either. Two members can then decode to the same name, and a `payload.file` carrying U+FFFD can match a member whose real name is something else, which puts the result at the mercy of member order that the specification forbids depending on. The rule that closes it needs no flag: CP437 decoding never produces U+FFFD, so a decoded name carrying one over raw bytes that are not valid UTF-8 came from the lossy branch, and that member's true name is not a Rust string and equals no `payload.file`, which always is one. Such a member never matches.
+Two further assumptions sat inside those four, unstated, and neither holds.
+
+**The crate cannot count members.** `ZipArchive` keys its directory by name, so two members sharing one arrive as a single entry and `len()` counts them once. SPEC §2.1 requires exactly one member named `slipcase.metadata.toml` and exactly one matching `payload.file`, which is a question the crate cannot be asked. The central directory is therefore read here, in `central.rs`, for names alone: it counts, and members are still located and read through the crate. That module carries its own CP437 table, transcribed from the crate's, so the two cannot disagree about what a name decodes to.
+
+The second is that a name the crate hands back can be trusted to be the name. When bit 11 is set but the name bytes are not valid UTF-8, the crate substitutes U+FFFD rather than reporting the problem, and nothing in the public API reports which decoding it chose — `ZipArchive` hands back no reference to its reader, so the flag word cannot be re-read either. Two members can then decode to the same name, and a `payload.file` carrying U+FFFD can match a member whose real name is something else, which puts the result at the mercy of member order that the specification forbids depending on. The rule that closes it needs no flag: CP437 decoding never produces U+FFFD, so a decoded name carrying one over raw bytes that are not valid UTF-8 came from the lossy branch, and that member's true name is not a Rust string and equals no `payload.file`, which always is one. Such a member never matches.
 
 **The minimum supported Rust version is 1.88, and it comes from the dependencies rather than from this code.** The fleet measures the floor and declares it, rather than inferring it from the edition; 1.88 is what `zip` asks for, above `toml_edit`'s 1.85 and everything below them, and it was built and run rather than read off a manifest. The number is whatever the ZIP and TOML crates demand, which is above the rest of the fleet's and rises whenever either of them raises theirs. The manifest says so where it declares the number, because a floor inherited from a dependency moves without anyone here deciding that it should, and a consumer reading `rust-version` cannot otherwise tell the two cases apart.
 
@@ -79,7 +83,7 @@ slpc::pack_reader(payload_name, reader, metadata, writer)?;   // metadata: Into<
 slpc::pack_file(&payload_path, metadata, writer)?;            // name taken from the path
 slpc::rewrite_metadata(reader, &document, writer)?;
 slpc::rewrite_metadata_bytes(reader, &bytes, writer)?;
-slpc::validate(reader)?;
+slpc::validate(reader)?;   // -> Verdict
 ```
 
 The container is `mut` because the archive lends out one member at a time, which is the ZIP crate's shape rather than a choice made here.\n\n**The payload is never read into memory.** Payloads are arbitrary files of arbitrary size, and a library that returns `Vec<u8>` decides for its caller that the file fits in RAM.
@@ -116,11 +120,13 @@ Copying a member whose compression method the crate cannot decompress means copy
 
 **The library validates what it is about to write.** Valid TOML 1.1.0, UTF-8, both required keys present and of the right type, and `payload.file` naming a member the archive actually contains. A key that is present and is a string still describes nothing if it points at a member that is not there, and a caller free to edit the document is free to break it that way. Without these checks, `rewrite_metadata_bytes` is a way to produce a non-conformant container from the reference implementation. The usual argument for the opposite is that malformed containers are needed for tests, and §7 answers it: the conformance corpus is built upstream with `zip` and a shell script, deliberately not with this tool.
 
-### 4.5 Errors
+### 4.5 Errors and verdicts
 
 - **I/O** — the file could not be read or written.
 - **Malformed** — this is not a conformant container. Each variant names the rule it violates, so the message can point at a specification clause.
 - **Unsupported** — this is or may be a conformant container, and this build cannot handle it. An encrypted member, a compression method the crate does not implement, a `slipcase_version` this build does not recognize.
+
+**Validation returns a verdict rather than a yes or no.** Four answers, because two will not do: conformant, non-conformant with the rule it breaks, undetermined when the metadata member cannot be read at all, and out of scope when the container declares a version this build does not implement. SPEC §3 forbids reporting a container as conformant *or* as non-conformant when its metadata cannot be read, and SPEC §2.4 puts another version outside the question rather than failing it. A `Result<()>` can say neither thing, and the first version of this library discarded at its signature a distinction the error families below already drew.
 
 The specification lists compression, encryption, and Zip64 among the properties a container must not be rejected for. "I cannot read this" and "this is invalid" are therefore different answers, and collapsing them would have the implementation reporting conformant containers as broken. Validation reads the central directory and the metadata member: it confirms that a member matching `payload.file` is present and is not a symlink entry, and it never decompresses the payload. A container whose payload uses a compression method this build cannot read therefore still validates.
 
@@ -144,7 +150,7 @@ Behavior that is decided rather than obvious:
 - **Both required keys are set for the user**, by the library rather than by the CLI: `payload.file` from the payload's own filename, `slipcase_version` from the build. §4.3. A `--meta` file that sets `payload.file` to something else is an error rather than a silent overwrite.
 - **A payload whose filename cannot be a member name is rejected, not renamed.** A local file may contain characters that `payload.file` forbids; packing it would produce a container that cannot name its own payload.
 - **Neither `pack` nor `unpack` overwrites an existing file without `--force`.** Both write to a temporary file beside the destination and rename it into place, so a run that fails partway leaves nothing behind rather than a truncated container that looks like one, and `--force` cannot destroy the old file and then fail to produce the new. `unpack --metadata` reserves both destinations before writing either.
-- **Exit codes:** 0 for success or conformance, 1 for bad input, 2 for a bad command line. The split is about whose mistake it is: 2 says re-read `--help`, 1 says go and look at the file. A non-conformant container and an unreadable one share 1 rather than splitting, because the distinction is already carried in the message and a wider code space returns less than it costs.
+- **Exit codes:** 0 for success or conformance, 1 for bad input, 2 for a bad command line, 3 for no verdict. The first three split on whose mistake it is: 2 says re-read `--help`, 1 says go and look at the file, and a non-conformant container shares 1 with an unreadable one because that distinction is carried in the message. The fourth is against the fleet's convention, which keeps the space to three, and it is earned because this distinction is normative rather than convenient: a container whose metadata cannot be read, or which declares another version, is one SPEC §3 forbids calling non-conformant, and with one code for both a caller branching on the status reads it as exactly that.
 - **`-` names standard input**, per the fleet convention, which is worth honoring because a caller writes `-` by reflex and a tool that reads it as a filename fails in a way that looks like the caller's own bug. `pack -` is the case the library's reader form exists for and streams without buffering, though it needs `--name`, since there is no filename to take `payload.file` from. The reading verbs cannot stream at all: a ZIP's central directory is at its end, so `info -`, `validate -`, and `unpack -` spool standard input to a temporary file and open that. The cost is the CLI's to pay rather than the library's, which keeps its `Read + Seek` bound and never spools for a caller who already has a file.
 - `--version`, `-V`, `--help`, `-h`, per the fleet convention.
 

@@ -9,8 +9,8 @@ use std::path::Path;
 use toml_edit::DocumentMut;
 use zip::ZipArchive;
 
-use crate::error::{Error, Malformed, Result, Unsupported};
-use crate::{metadata, name, METADATA_MEMBER, VERSION};
+use crate::error::{EntryKind, Error, Malformed, Result, Unsupported};
+use crate::{central, metadata, name, METADATA_MEMBER, VERSION};
 
 /// One member of the central directory, as far as this library cares.
 ///
@@ -21,7 +21,7 @@ use crate::{metadata, name, METADATA_MEMBER, VERSION};
 pub(crate) struct Entry {
     name: String,
     raw: Vec<u8>,
-    symlink: bool,
+    kind: EntryKind,
 }
 
 /// A slipcase container, open for reading.
@@ -31,6 +31,10 @@ pub(crate) struct Entry {
 pub struct Container<R> {
     pub(crate) archive: ZipArchive<R>,
     pub(crate) entries: Vec<Entry>,
+    /// Every central directory name, duplicates included, for the counting the
+    /// ZIP crate cannot do. Kept so a rewrite can check the metadata it is
+    /// about to write against the same archive.
+    pub(crate) names: Vec<central::RawName>,
     pub(crate) metadata_index: usize,
     doc: DocumentMut,
     bytes: Vec<u8>,
@@ -57,7 +61,14 @@ impl<R: Read + Seek> Container<R> {
     /// Reads the central directory and the metadata member, and nothing else.
     /// The payload is not decompressed and not read, so a container whose
     /// payload uses a compression method this build lacks still opens.
-    pub fn read(reader: R) -> Result<Self> {
+    pub fn read(mut reader: R) -> Result<Self> {
+        // Count names before the archive is built, because `ZipArchive` keys
+        // its directory by name and two members sharing one arrive as a single
+        // entry. SPEC 2.1 requires exactly one of each named member, which is
+        // a question the crate cannot be asked.
+        let names = central::names(&mut reader)?;
+        reader.rewind()?;
+
         let mut archive = ZipArchive::new(reader)?;
 
         // `by_index_raw` rather than `by_index`: the latter refuses a member
@@ -70,10 +81,15 @@ impl<R: Read + Seek> Container<R> {
             entries.push(Entry {
                 name: f.name().to_owned(),
                 raw: f.name_raw().to_owned(),
-                symlink: f.is_symlink(),
+                kind: EntryKind::from_mode(f.unix_mode()),
             });
         }
 
+        match central::count(&names, METADATA_MEMBER) {
+            0 => return Err(Malformed::NoMetadataMember.into()),
+            1 => {}
+            n => return Err(Malformed::DuplicateMetadataMember(n).into()),
+        }
         let meta_index = entries
             .iter()
             .position(|e| name::matches(&e.name, &e.raw, METADATA_MEMBER))
@@ -96,7 +112,7 @@ impl<R: Read + Seek> Container<R> {
         // implement is parsed and reported and no further, because SPEC 3
         // forbids assuming its rules are the ones written here.
         let payload_index = if version == VERSION {
-            Some(locate_payload(&entries, &payload_file)?)
+            Some(locate_payload(&entries, &names, &payload_file)?)
         } else {
             None
         };
@@ -104,6 +120,7 @@ impl<R: Read + Seek> Container<R> {
         Ok(Self {
             archive,
             entries,
+            names,
             metadata_index: meta_index,
             doc,
             bytes,
@@ -166,22 +183,37 @@ impl<R: Read + Seek> Container<R> {
 }
 
 /// Find the member `payload.file` names, and check it may be a payload.
-pub(crate) fn locate_payload(entries: &[Entry], payload_file: &str) -> Result<usize> {
+pub(crate) fn locate_payload(
+    entries: &[Entry],
+    names: &[central::RawName],
+    payload_file: &str,
+) -> Result<usize> {
     name::check_payload_name(payload_file)?;
 
-    // Two members may carry one name, and the specification says nothing about
-    // which is the payload when they do. Taking the first is a choice this
-    // implementation makes and has no standing to turn into a format rule, so
-    // it is recorded here and raised upstream rather than settled quietly.
+    match central::count(names, payload_file) {
+        0 => return Err(Malformed::NoPayloadMember(payload_file.to_owned()).into()),
+        1 => {}
+        count => {
+            return Err(Malformed::DuplicatePayloadMember {
+                name: payload_file.to_owned(),
+                count,
+            }
+            .into())
+        }
+    }
+
     let i = entries
         .iter()
         .position(|e| name::matches(&e.name, &e.raw, payload_file))
         .ok_or_else(|| Malformed::NoPayloadMember(payload_file.to_owned()))?;
 
-    if entries[i].symlink {
-        return Err(Error::Malformed(Malformed::PayloadIsSymlink(
-            payload_file.to_owned(),
-        )));
+    // SPEC 2.3 requires a regular file entry, so every other type an archive
+    // can record is excluded rather than just symbolic links.
+    if entries[i].kind != EntryKind::Regular {
+        return Err(Error::Malformed(Malformed::PayloadNotARegularFile {
+            name: payload_file.to_owned(),
+            kind: entries[i].kind,
+        }));
     }
     Ok(i)
 }

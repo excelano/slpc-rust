@@ -8,7 +8,7 @@ mod support;
 use std::io::Read;
 use support::{container, metadata, open, raw_zip, Member};
 
-use slpc::{Error, Malformed, NameError, Unsupported, METADATA_MEMBER};
+use slpc::{EntryKind, Error, Malformed, NameError, Unsupported, METADATA_MEMBER};
 
 /// Read the payload out, whole, for comparison.
 fn payload_of(c: &mut slpc::Container<std::io::Cursor<Vec<u8>>>) -> Vec<u8> {
@@ -203,15 +203,75 @@ fn rejects_a_payload_file_that_names_nothing() {
 }
 
 #[test]
-fn rejects_a_payload_that_is_a_symlink_entry() {
-    let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("link.txt").as_bytes()),
-        Member::new("link.txt", b"/etc/passwd").symlink(),
+fn rejects_a_payload_that_is_not_a_regular_file_entry() {
+    // SPEC 2.3 excludes every entry type but one, so each is checked rather
+    // than only the symbolic link the earlier text named.
+    for (mode, want) in [
+        (0o120_777, EntryKind::Symlink),
+        (0o040_755, EntryKind::Directory),
+        (0o010_644, EntryKind::Other(0o1)),
+        (0o140_644, EntryKind::Other(0o14)),
+        (0o020_644, EntryKind::Other(0o2)),
+    ] {
+        let bytes = raw_zip(&[
+            Member::new(METADATA_MEMBER, metadata("odd").as_bytes()),
+            Member::new("odd", b"payload").with_mode(mode),
+        ]);
+        match open(&bytes) {
+            Err(Error::Malformed(Malformed::PayloadNotARegularFile { kind, .. })) => {
+                assert_eq!(kind, want, "mode {mode:o}");
+            }
+            other => panic!(
+                "mode {mode:o}: expected PayloadNotARegularFile, got {:?}",
+                other.err()
+            ),
+        }
+    }
+}
+
+#[test]
+fn rejects_more_than_one_member_of_either_name() {
+    // SPEC 2.1 requires exactly one of each. Two agreeing metadata members are
+    // the case worth having: taking the first would read them as one container
+    // and never notice.
+    let two_metadata = raw_zip(&[
+        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new("a.txt", b"x"),
     ]);
-    assert!(matches!(
-        open(&bytes),
-        Err(Error::Malformed(Malformed::PayloadIsSymlink(_)))
-    ));
+    match open(&two_metadata) {
+        Err(Error::Malformed(Malformed::DuplicateMetadataMember(n))) => assert_eq!(n, 2),
+        other => panic!("expected DuplicateMetadataMember, got {:?}", other.err()),
+    }
+
+    let two_payloads = raw_zip(&[
+        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new("a.txt", b"first"),
+        Member::new("a.txt", b"second"),
+    ]);
+    match open(&two_payloads) {
+        Err(Error::Malformed(Malformed::DuplicatePayloadMember { name, count })) => {
+            assert_eq!((name.as_str(), count), ("a.txt", 2));
+        }
+        other => panic!("expected DuplicatePayloadMember, got {:?}", other.err()),
+    }
+}
+
+#[test]
+fn rejects_a_payload_file_containing_a_control_character() {
+    for c in ['\u{0}', '\n', '\r', '\u{1f}', '\u{7f}'] {
+        let name = format!("rep{c}ort.pdf");
+        let bytes = raw_zip(&[
+            Member::new(METADATA_MEMBER, metadata(&name).as_bytes()),
+            Member::new(&name, b"x"),
+        ]);
+        match open(&bytes) {
+            Err(Error::Malformed(Malformed::PayloadName(NameError::ControlCharacter(got)))) => {
+                assert_eq!(got, c);
+            }
+            other => panic!("U+{:04X}: got {:?}", c as u32, other.err()),
+        }
+    }
 }
 
 #[test]

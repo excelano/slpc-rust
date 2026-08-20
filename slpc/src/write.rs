@@ -129,7 +129,7 @@ where
     }
     // Against the archive it is about to describe, not against the one it came
     // from, because those are the same archive here and will not be elsewhere.
-    locate_payload(&c.entries, &keys.payload_file)?;
+    locate_payload(&c.entries, &c.names, &keys.payload_file)?;
 
     let mut w = ZipWriter::new_stream(out);
     for i in 0..c.entries.len() {

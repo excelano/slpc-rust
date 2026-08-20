@@ -10,7 +10,7 @@ mod fail;
 mod input;
 mod output;
 
-use std::io::Write;
+use std::io::{Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -19,15 +19,20 @@ use clap::{Args, Parser, Subcommand};
 use fail::{Context, Failure, Result};
 use output::Destination;
 use slpc::toml_edit::DocumentMut;
-use slpc::Container;
+use slpc::{Container, Verdict};
 
 /// Stated in `--help` because an undocumented convention is one a caller has to
 /// discover by experiment.
 const EXIT_CODES: &str = "\
 Exit codes:
   0  success, or the container is conformant
-  1  bad input: a file that is missing, unreadable, non-conformant, or beyond this build
+  1  bad input: a file that is missing, unreadable, or not a conformant container
   2  bad command line: an unknown flag, a missing argument, a verb that is not one of these
+  3  no verdict: the container may well be conformant and this build cannot say
+
+3 is separate from 1 because the specification forbids calling a container
+non-conformant when its metadata member cannot be read, or when it declares a
+version this build does not implement. Both are answers, not failures.
 
 Wherever a file is read, `-` names standard input.";
 
@@ -102,7 +107,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("slipcase: {e}");
-            ExitCode::from(1)
+            ExitCode::from(e.code())
         }
     }
 }
@@ -225,23 +230,30 @@ fn info(path: &Path) -> Result<()> {
 }
 
 fn validate(path: &Path) -> Result<()> {
-    let c = Container::read(input::container(path)?)?;
+    // Read the source once. `-` spools standard input to a file, and standard
+    // input cannot be read a second time, so the rewind below is what lets the
+    // conformant case name the payload without asking for the bytes again.
+    let mut source = input::container(path)?;
+    let verdict = slpc::validate(&mut source)?;
 
-    // A version this build does not implement is not a non-conformant
-    // container, and saying "conformant" would claim a check that never ran:
-    // everything past the two required keys is a rule this version's text
-    // states. Exit 1 is the refusal, not a verdict on the file.
-    if c.version() != slpc::VERSION {
-        return Err(Failure::new(format!(
-            "declares slipcase {}, which this build does not implement. The metadata is well formed; nothing beyond it was checked.",
-            c.version()
-        )));
+    // Each of the four verdicts gets the exit code that says what it is.
+    // Reporting undetermined or out-of-scope with the code a rejected container
+    // gets is the conflation SPEC 3 forbids.
+    match verdict {
+        Verdict::Conformant => {
+            source.rewind().context("cannot re-read the container")?;
+            let c = Container::read(source)?;
+            println!(
+                "conformant — slipcase {}, payload {}",
+                c.version(),
+                c.payload_name()
+            );
+            Ok(())
+        }
+        v @ Verdict::NonConformant(_) => Err(Failure::new(v.to_string())),
+        // Undetermined, out of scope, and anything a later version of the
+        // library adds. Defaulting an unfamiliar verdict to "no verdict" is the
+        // safe direction: it never claims a check this build did not run.
+        v => Err(Failure::no_verdict(v.to_string())),
     }
-
-    println!(
-        "conformant — slipcase {}, payload {}",
-        c.version(),
-        c.payload_name()
-    );
-    Ok(())
 }
