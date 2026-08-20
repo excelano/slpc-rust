@@ -5,7 +5,6 @@
 //
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
-
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::pedantic)]
 #![allow(clippy::missing_errors_doc)]
