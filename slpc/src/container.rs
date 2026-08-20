@@ -10,14 +10,15 @@ use toml_edit::DocumentMut;
 use zip::ZipArchive;
 
 use crate::error::{Error, Malformed, Result, Unsupported};
-use crate::{name, METADATA_MEMBER, PAYLOAD_FILE_KEY, VERSION, VERSION_KEY};
+use crate::{metadata, name, METADATA_MEMBER, VERSION};
 
 /// One member of the central directory, as far as this library cares.
 ///
 /// Collected in a single pass at open time because `ZipArchive` lends out one
 /// member at a time and re-reading the directory per lookup would be the same
-/// work done repeatedly.
-struct Entry {
+/// work done repeatedly. The rewrite path walks the same list to copy members
+/// through in the order they arrived.
+pub(crate) struct Entry {
     name: String,
     raw: Vec<u8>,
     symlink: bool,
@@ -28,7 +29,9 @@ struct Entry {
 /// Reading needs `Read + Seek`, because a ZIP's central directory is at the end
 /// of the file and there is no way to find a member without first finding that.
 pub struct Container<R> {
-    archive: ZipArchive<R>,
+    pub(crate) archive: ZipArchive<R>,
+    pub(crate) entries: Vec<Entry>,
+    pub(crate) metadata_index: usize,
     doc: DocumentMut,
     bytes: Vec<u8>,
     version: String,
@@ -82,13 +85,11 @@ impl<R: Read + Seek> Container<R> {
         let mut bytes = Vec::new();
         archive.by_index(meta_index)?.read_to_end(&mut bytes)?;
 
-        let text = std::str::from_utf8(&bytes).map_err(|_| Malformed::MetadataNotUtf8)?;
-        let doc: DocumentMut = text
-            .parse()
-            .map_err(|e: toml_edit::TomlError| Malformed::MetadataNotToml(e.to_string()))?;
-
-        let version = required_string(&doc, VERSION_KEY)?.to_owned();
-        let payload_file = required_string(&doc, PAYLOAD_FILE_KEY)?.to_owned();
+        let (doc, keys) = metadata::parse(&bytes)?;
+        let crate::metadata::Keys {
+            version,
+            payload_file,
+        } = keys;
 
         // Everything past this point is a rule stated by version 1.0 of the
         // specification. A container declaring a version this build does not
@@ -102,6 +103,8 @@ impl<R: Read + Seek> Container<R> {
 
         Ok(Self {
             archive,
+            entries,
+            metadata_index: meta_index,
             doc,
             bytes,
             version,
@@ -144,6 +147,11 @@ impl<R: Read + Seek> Container<R> {
         &self.bytes
     }
 
+    /// Whether `slipcase_version` is one this build implements.
+    pub(crate) fn version_is_recognised(&self) -> bool {
+        self.payload_index.is_some()
+    }
+
     /// The payload, as a stream.
     ///
     /// Never buffered whole. A payload is a file of arbitrary size, and a
@@ -157,18 +165,8 @@ impl<R: Read + Seek> Container<R> {
     }
 }
 
-/// Read a required key that SPEC 2.2 says is a string.
-fn required_string<'d>(doc: &'d DocumentMut, key: &'static str) -> Result<&'d str> {
-    let item = key
-        .split('.')
-        .try_fold(doc.as_item(), |item, part| item.get(part))
-        .ok_or(Malformed::MissingKey(key))?;
-    item.as_str()
-        .ok_or_else(|| Malformed::KeyNotAString(key).into())
-}
-
 /// Find the member `payload.file` names, and check it may be a payload.
-fn locate_payload(entries: &[Entry], payload_file: &str) -> Result<usize> {
+pub(crate) fn locate_payload(entries: &[Entry], payload_file: &str) -> Result<usize> {
     name::check_payload_name(payload_file)?;
 
     // Two members may carry one name, and the specification says nothing about

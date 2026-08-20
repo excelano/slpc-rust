@@ -73,14 +73,16 @@ c.metadata_mut();     // &mut DocumentMut — changed in place
 c.metadata_bytes();   // &[u8] — the metadata member as stored, byte for byte
 let mut r = c.payload()?;   // impl Read — streams, never buffered whole
 
-Container::pack_reader(payload_name, reader, metadata, writer)?;   // metadata: Into<Document>
-Container::pack_file(&payload_path, metadata, writer)?;            // name taken from the path
-Container::rewrite_metadata(reader, &document, writer)?;
-Container::rewrite_metadata_bytes(reader, &bytes, writer)?;
+slpc::pack_reader(payload_name, reader, metadata, writer)?;   // metadata: Into<DocumentMut>
+slpc::pack_file(&payload_path, metadata, writer)?;            // name taken from the path
+slpc::rewrite_metadata(reader, &document, writer)?;
+slpc::rewrite_metadata_bytes(reader, &bytes, writer)?;
 slpc::validate(reader)?;
 ```
 
 The container is `mut` because the archive lends out one member at a time, which is the ZIP crate's shape rather than a choice made here.\n\n**The payload is never read into memory.** Payloads are arbitrary files of arbitrary size, and a library that returns `Vec<u8>` decides for its caller that the file fits in RAM.
+
+**The four writing operations are free functions**, beside `validate` rather than beside `Container`. Not one of them takes or returns a container: each reads a stream and writes a stream, while `Container` means one thing, a container open for reading. Hanging them off it would be choosing a namespace rather than describing a relationship, which is the difference between `File::create` and `fs::copy`.
 
 **No vocabulary.** The library exposes the metadata document and typed accessors for the two structural keys. It defines no others, validates no others, and has no opinion on what any of them mean.
 
@@ -96,7 +98,7 @@ The bytes are for a caller who wants a different parser, a schema validator, or 
 
 `pack_reader` takes a name and a `Read`, not a `Read + Seek`. Requiring seek would allow two passes over the payload to compute its length and checksum before the local header goes down, and it would also rule out pipes, sockets, and anything generated as it is written, which are the reason the reader form exists at all. The length is therefore unknown at the moment the header is written, and the member goes out with a data descriptor, which §3 confirmed the crate emits over a writer that implements only `Write`. That settles the other bound too: nothing on the write side asks a caller for `Seek`, so a container can be packed straight into a socket or a pipe. The specification constrains none of this.
 
-`pack_file` has neither problem, because a file on disk can be measured and read twice.
+`pack_file` has neither problem, because a file on disk can be measured and read twice. It goes through the same streaming core anyway, and its member goes out with a data descriptor like the other's. Both are conformant, and one path is easier to keep right than two.
 
 **The two forms fail differently, and the errors say so.** `pack_reader` is handed a name by its caller, and that name has to satisfy the specification's rules for `payload.file`: non-empty, not `.` or `..`, no `/`, `\`, or `:`, and not `slipcase.metadata.toml`. `pack_file` derives the name instead, so its failure is that a file on disk is called something that cannot be a member name. One is a caller passing a bad argument and the other is a payload that cannot be packed as itself, and collapsing them would have the second complain about an argument the caller never supplied.
 
@@ -106,7 +108,7 @@ There is no bare `pack`. The two forms differ in more than convenience — one v
 
 ### 4.4 Rewriting
 
-The specification requires that members an implementation does not recognize survive a rewrite. `rewrite_metadata` copies every member through and substitutes only `slipcase.metadata.toml`, which is why it is an associated function over a reader and a writer rather than a mutable container that gets saved: a rewrite that streams cannot accidentally hold the payload in memory, and a container is never partly in RAM and partly on disk.
+The specification requires that members an implementation does not recognize survive a rewrite. `rewrite_metadata` copies every member through and substitutes only `slipcase.metadata.toml`, which is why it is a free function over a reader and a writer rather than a mutable container that gets saved: a rewrite that streams cannot accidentally hold the payload in memory, and a container is never partly in RAM and partly on disk.
 
 Copying a member whose compression method the crate cannot decompress means copying its compressed bytes untouched, which is the third item in §3. It is what allows a container to be rewritten without being fully understood.
 

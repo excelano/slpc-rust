@@ -22,6 +22,8 @@ pub enum NameError {
     Colon,
     /// The name is the metadata member's.
     ReservedForMetadata,
+    /// The name is not UTF-8, so no TOML string can hold it.
+    NotUtf8,
 }
 
 impl fmt::Display for NameError {
@@ -32,14 +34,20 @@ impl fmt::Display for NameError {
             Self::Separator(c) => write!(f, "payload.file contains {c:?}, so it is a path rather than a filename (SPEC 2.3)"),
             Self::Colon => f.write_str("payload.file contains ':', which is read as rooting a path on some platforms (SPEC 2.3)"),
             Self::ReservedForMetadata => write!(f, "payload.file is {:?}, which names the metadata member (SPEC 2.3)", crate::METADATA_MEMBER),
+            Self::NotUtf8 => f.write_str("the name is not UTF-8, and payload.file is a TOML string (SPEC 2.2)"),
         }
     }
 }
 
-/// Why a byte stream is not a conformant container.
+/// Why a byte stream is not a conformant container, or why the container asked
+/// for could not be written.
 ///
 /// Each variant names the rule it breaks. A caller that wants to explain itself
 /// can print the variant and cite the clause it carries.
+///
+/// The write-side variants sit here rather than in a family of their own
+/// because they say the same thing from the other direction: the container that
+/// would come out is not one this library would accept back.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Malformed {
@@ -61,6 +69,31 @@ pub enum Malformed {
     NoPayloadMember(String),
     /// The payload member is a symbolic link entry (SPEC 2.3).
     PayloadIsSymlink(String),
+    /// A file on disk is called something `payload.file` cannot express (SPEC 2.3).
+    ///
+    /// The payload is rejected rather than renamed. A container that cannot
+    /// name its own payload is worse than a refusal to write one.
+    PayloadPathName {
+        /// The path that was handed in.
+        path: std::path::PathBuf,
+        /// Which rule its filename breaks.
+        cause: NameError,
+    },
+    /// Metadata handed in contradicts what is being written (SPEC 2.2).
+    ///
+    /// The library sets both required keys itself, so a caller that also sets
+    /// one has said two things. Which of them was meant is not recoverable, and
+    /// overwriting silently would pick one without saying so.
+    Disagrees {
+        /// The key both sides set.
+        key: &'static str,
+        /// What the metadata handed in says.
+        found: String,
+        /// What is actually being written.
+        writing: String,
+    },
+    /// `payload` is present in the metadata and is not a table (SPEC 2.2).
+    PayloadNotATable,
 }
 
 impl fmt::Display for Malformed {
@@ -89,6 +122,16 @@ impl fmt::Display for Malformed {
                 f,
                 "the payload member {n:?} is a symbolic link entry (SPEC 2.3)"
             ),
+            Self::PayloadPathName { path, cause } => write!(
+                f,
+                "{} cannot be packed under its own name: {cause}",
+                path.display()
+            ),
+            Self::Disagrees { key, found, writing } => write!(
+                f,
+                "the metadata sets `{key}` to {found:?}, but this container is being written with {writing:?} (SPEC 2.2)"
+            ),
+            Self::PayloadNotATable => f.write_str("the metadata's `payload` is not a table (SPEC 2.2)"),
         }
     }
 }

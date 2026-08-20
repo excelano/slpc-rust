@@ -15,6 +15,21 @@
 //! The specification lives in `excelano/slipcase` and is the authority on the
 //! format. This crate implements it and has no standing to change it.
 //!
+//! Writing is four free functions, because none of them takes or returns a
+//! container:
+//!
+//! ```no_run
+//! use toml_edit::DocumentMut;
+//! slpc::pack_file("report.pdf", DocumentMut::new(), std::fs::File::create("report.pdf.slpc")?)?;
+//! # Ok::<(), slpc::Error>(())
+//! ```
+//!
+//! The metadata argument is anything convertible into a `DocumentMut`, which is
+//! a document, a table, or, with `toml_edit`'s `serde` feature turned on by the
+//! caller, whatever `toml_edit::ser::to_document` makes of a struct or a map.
+//! Building metadata from nothing has no formatting to preserve, so there is
+//! nothing for that conversion to lose.
+//!
 //! # No vocabulary
 //!
 //! The two structural keys have typed accessors. Every other key is passed
@@ -29,11 +44,14 @@
 
 mod container;
 mod error;
+mod metadata;
 mod name;
+mod write;
 
 pub use container::Container;
 pub use error::{Error, Malformed, NameError, Result, Unsupported};
 pub use name::check_payload_name;
+pub use write::{pack_file, pack_reader, rewrite_metadata, rewrite_metadata_bytes};
 
 /// The archive member holding the metadata (SPEC 2.1).
 pub const METADATA_MEMBER: &str = "slipcase.metadata.toml";
