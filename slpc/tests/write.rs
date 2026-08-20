@@ -86,6 +86,21 @@ fn sets_both_required_keys_itself() {
 }
 
 #[test]
+fn the_metadata_it_generates_looks_like_the_specification_example() {
+    // Not a conformance rule: an inline table would be valid TOML and a
+    // conformant container. It is that this is the implementation whose output
+    // everyone will copy, so what it writes should look like SPEC 2.2.
+    let mut out = WriteOnly::default();
+    slpc::pack_reader("report.pdf", pipe(b"x"), DocumentMut::new(), &mut out).unwrap();
+
+    let c = open(&out.0).unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(c.metadata_bytes()),
+        "slipcase_version = \"1.0\"\n\n[payload]\nfile = \"report.pdf\"\n"
+    );
+}
+
+#[test]
 fn passes_everything_else_in_the_metadata_through() {
     let given = doc("title = \"Q3 results\"\n\n[custom]\nnested = { deep = [1, 2] }\n");
     let mut out = WriteOnly::default();

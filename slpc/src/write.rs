@@ -208,8 +208,18 @@ fn agree_or_set(doc: &mut DocumentMut, key: &'static str, writing: &str) -> Resu
 
     match existing {
         None => {
+            // Any table this has to create is created explicitly, because
+            // indexing through a missing key leaves toml_edit to invent the
+            // shape and it invents `payload = { file = "..." }`. That is valid
+            // TOML and a conformant container, but it is not what SPEC 2.2's
+            // example looks like, and this is the implementation whose output
+            // people will copy. It also reads worse the moment a second key
+            // joins it under the same table.
             let mut at = doc.as_item_mut();
             for part in &path[..path.len() - 1] {
+                if at.get(part).is_none() {
+                    at[*part] = toml_edit::Item::Table(toml_edit::Table::new());
+                }
                 at = &mut at[*part];
             }
             at[path[path.len() - 1]] = value(writing);
