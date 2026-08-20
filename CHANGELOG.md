@@ -9,7 +9,7 @@ minor bump below 1.0 is how a breaking change ships.
 This file begins at 0.3.0. Earlier releases carried no notes, and the tags and
 the commit history are the record for those.
 
-## [Unreleased]
+## [0.3.0] - 2026-08-20
 
 ### Added
 
