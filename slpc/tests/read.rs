@@ -5,17 +5,9 @@
 
 mod support;
 
-use std::io::Read;
-use support::{container, metadata, open, raw_zip, Member};
+use support::{container, metadata, open, payload_of, raw_zip, Member};
 
 use slpc::{EntryKind, Error, Malformed, NameError, Unsupported, METADATA_MEMBER};
-
-/// Read the payload out, whole, for comparison.
-fn payload_of(c: &mut slpc::Container<std::io::Cursor<Vec<u8>>>) -> Vec<u8> {
-    let mut got = Vec::new();
-    c.payload().unwrap().read_to_end(&mut got).unwrap();
-    got
-}
 
 #[test]
 fn reads_a_container() {

@@ -4,7 +4,7 @@
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
 
-use toml_edit::DocumentMut;
+use toml_edit::{DocumentMut, Item};
 
 use crate::error::{Malformed, Result};
 use crate::{PAYLOAD_FILE_KEY, VERSION_KEY};
@@ -32,16 +32,20 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<(DocumentMut, Keys)> {
     Ok((doc, keys))
 }
 
-/// Read a required key that SPEC 2.2 says is a string.
+/// Follow a key through the document.
 ///
-/// The key may be dotted, as `payload.file` is. Both keys this library knows
-/// are its own constants, so a key whose own name contains a dot cannot reach
-/// here.
-pub(crate) fn required_string<'d>(doc: &'d DocumentMut, key: &'static str) -> Result<&'d str> {
-    let item = key
-        .split('.')
+/// The key may be dotted, as `payload.file` is, in which case each part is a
+/// step down. Both keys this library knows are its own constants, so a key
+/// whose own name contains a dot cannot reach here.
+pub(crate) fn lookup<'d>(doc: &'d DocumentMut, key: &str) -> Option<&'d Item> {
+    key.split('.')
         .try_fold(doc.as_item(), |item, part| item.get(part))
-        .ok_or(Malformed::MissingKey(key))?;
-    item.as_str()
+}
+
+/// Read a required key that SPEC 2.2 says is a string.
+pub(crate) fn required_string<'d>(doc: &'d DocumentMut, key: &'static str) -> Result<&'d str> {
+    lookup(doc, key)
+        .ok_or(Malformed::MissingKey(key))?
+        .as_str()
         .ok_or_else(|| Malformed::KeyNotAString(key).into())
 }

@@ -201,12 +201,7 @@ fn with_required_keys(mut doc: DocumentMut, payload_name: &str) -> Result<Docume
 /// Leave a key that already says the right thing, set one that is absent, and
 /// refuse one that says something else.
 fn agree_or_set(doc: &mut DocumentMut, key: &'static str, writing: &str) -> Result<()> {
-    let path: Vec<&str> = key.split('.').collect();
-    let existing = path
-        .iter()
-        .try_fold(doc.as_item(), |item, part| item.get(part));
-
-    match existing {
+    match metadata::lookup(doc, key) {
         None => {
             // Any table this has to create is created explicitly, because
             // indexing through a missing key leaves toml_edit to invent the
@@ -215,14 +210,16 @@ fn agree_or_set(doc: &mut DocumentMut, key: &'static str, writing: &str) -> Resu
             // example looks like, and this is the implementation whose output
             // people will copy. It also reads worse the moment a second key
             // joins it under the same table.
+            let path: Vec<&str> = key.split('.').collect();
+            let (last, tables) = path.split_last().expect("a key is never empty");
             let mut at = doc.as_item_mut();
-            for part in &path[..path.len() - 1] {
+            for part in tables {
                 if at.get(part).is_none() {
                     at[*part] = toml_edit::Item::Table(toml_edit::Table::new());
                 }
                 at = &mut at[*part];
             }
-            at[path[path.len() - 1]] = value(writing);
+            at[*last] = value(writing);
             Ok(())
         }
         Some(item) => {

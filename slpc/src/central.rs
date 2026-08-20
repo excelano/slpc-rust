@@ -38,9 +38,9 @@ impl RawName {
     pub fn decodes_to(&self, want: &str) -> bool {
         if self.utf8 {
             // A name flagged UTF-8 whose bytes are not UTF-8 has no decoding,
-            // so it equals nothing. The ZIP crate substitutes U+FFFD instead,
-            // which is what `name::matches` has to guard against; here the flag
-            // is in hand and the answer is direct.
+            // so it equals nothing. The ZIP crate substitutes U+FFFD instead
+            // and reports neither the flag nor the substitution, which is why
+            // names are decoded here rather than taken from it.
             std::str::from_utf8(&self.bytes).is_ok_and(|s| s == want)
         } else {
             self.bytes.len() == want.chars().count()
@@ -82,11 +82,6 @@ fn cp437(b: u8) -> char {
     } else {
         HIGH[b as usize - 0x80]
     }
-}
-
-/// How many names decode to `want`.
-pub(crate) fn count(names: &[RawName], want: &str) -> usize {
-    names.iter().filter(|n| n.decodes_to(want)).count()
 }
 
 /// Every name in the central directory, duplicates included.
@@ -179,4 +174,70 @@ fn zip64<R: Read + Seek>(
         u64::from_le_bytes(rec[32..40].try_into().unwrap()),
         u64::from_le_bytes(rec[48..56].try_into().unwrap()),
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn utf8(bytes: &[u8]) -> RawName {
+        RawName {
+            utf8: true,
+            bytes: bytes.to_vec(),
+        }
+    }
+    fn cp437_named(bytes: &[u8]) -> RawName {
+        RawName {
+            utf8: false,
+            bytes: bytes.to_vec(),
+        }
+    }
+
+    #[test]
+    fn a_name_decodes_to_itself() {
+        assert!(utf8(b"report.pdf").decodes_to("report.pdf"));
+        // Bit 11 clear, so CP437: 0x87 is U+00E7.
+        assert!(cp437_named(b"caf\x87.txt").decodes_to("caf\u{e7}.txt"));
+        // The same bytes read as UTF-8 are not that name, and are not any name.
+        assert!(!utf8(b"caf\x87.txt").decodes_to("caf\u{e7}.txt"));
+    }
+
+    #[test]
+    fn a_name_flagged_utf8_that_is_not_utf8_equals_nothing() {
+        // The ZIP crate would hand back U+FFFD here. A name with no decoding
+        // must match no `payload.file`, which is always a real string, or two
+        // members could collapse to one and the answer would depend on the
+        // order they sit in.
+        let bad = utf8(b"caf\xff.txt");
+        assert!(!bad.decodes_to("caf\u{fffd}.txt"));
+        assert!(!bad.decodes_to("caf\u{e7}.txt"));
+    }
+
+    #[test]
+    fn a_replacement_character_someone_meant_is_a_name_like_any_other() {
+        let honest = utf8("caf\u{fffd}.txt".as_bytes());
+        assert!(honest.decodes_to("caf\u{fffd}.txt"));
+    }
+
+    #[test]
+    fn cp437_covers_every_byte_and_repeats_none() {
+        // What makes the two branches distinguishable: no byte decodes to
+        // U+FFFD, so a replacement character can only have come from a lossy
+        // UTF-8 read.
+        let all: Vec<char> = (0u8..=255).map(cp437).collect();
+        let mut seen: Vec<char> = all.clone();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), 256, "every byte maps to a distinct character");
+        assert!(!all.contains(&'\u{fffd}'));
+    }
+
+    #[test]
+    fn comparison_is_exact_over_code_points() {
+        // SPEC 2.1: case-sensitive, and no normalization on either side.
+        assert!(!utf8(b"Report.pdf").decodes_to("report.pdf"));
+        let nfc = "caf\u{e9}.txt";
+        let nfd = "cafe\u{301}.txt";
+        assert!(!utf8(nfc.as_bytes()).decodes_to(nfd));
+    }
 }

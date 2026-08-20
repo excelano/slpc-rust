@@ -178,3 +178,13 @@ pub fn container(payload_file: &str, payload: &[u8]) -> Vec<u8> {
 pub fn open(bytes: &[u8]) -> slpc::Result<slpc::Container<std::io::Cursor<Vec<u8>>>> {
     slpc::Container::read(std::io::Cursor::new(bytes.to_vec()))
 }
+
+/// Read a payload out whole, for comparison.
+///
+/// Both test files want this, so it lives here rather than in each of them.
+pub fn payload_of(c: &mut slpc::Container<std::io::Cursor<Vec<u8>>>) -> Vec<u8> {
+    use std::io::Read;
+    let mut got = Vec::new();
+    c.payload().unwrap().read_to_end(&mut got).unwrap();
+    got
+}

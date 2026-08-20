@@ -19,9 +19,47 @@ use crate::{central, metadata, name, METADATA_MEMBER, VERSION};
 /// work done repeatedly. The rewrite path walks the same list to copy members
 /// through in the order they arrived.
 pub(crate) struct Entry {
-    name: String,
     raw: Vec<u8>,
     kind: EntryKind,
+}
+
+/// How many members of the central directory carry a given name.
+///
+/// A name is either absent, borne by one member, or borne by several, and SPEC
+/// 2.1 has a different thing to say about each. Which error a caller raises
+/// depends on which name it was looking for, so this reports and does not
+/// decide.
+pub(crate) enum Located {
+    One(usize),
+    None,
+    Several(usize),
+}
+
+/// Find the one archive member whose name decodes to `want`.
+///
+/// Counting happens over the central directory read in `central.rs`, because
+/// `ZipArchive` keys its own directory by name and cannot see a duplicate. The
+/// index returned is the archive's, found by the name's raw bytes.
+///
+/// Matching on raw bytes is exact here, and only because the count ran first.
+/// Two members can carry one byte string and decode differently only when their
+/// flag bits differ over non-ASCII bytes; over ASCII both branches agree, which
+/// would make them duplicates and stop this before it began.
+pub(crate) fn locate(entries: &[Entry], names: &[central::RawName], want: &str) -> Located {
+    let mut matched = names.iter().filter(|n| n.decodes_to(want));
+    let Some(first) = matched.next() else {
+        return Located::None;
+    };
+    let count = 1 + matched.count();
+    if count > 1 {
+        return Located::Several(count);
+    }
+    // The archive and the central directory are the same directory, so an entry
+    // counted there is an entry here.
+    match entries.iter().position(|e| e.raw == first.bytes) {
+        Some(i) => Located::One(i),
+        None => Located::None,
+    }
 }
 
 /// A slipcase container, open for reading.
@@ -79,21 +117,16 @@ impl<R: Read + Seek> Container<R> {
         for i in 0..archive.len() {
             let f = archive.by_index_raw(i)?;
             entries.push(Entry {
-                name: f.name().to_owned(),
                 raw: f.name_raw().to_owned(),
                 kind: EntryKind::from_mode(f.unix_mode()),
             });
         }
 
-        match central::count(&names, METADATA_MEMBER) {
-            0 => return Err(Malformed::NoMetadataMember.into()),
-            1 => {}
-            n => return Err(Malformed::DuplicateMetadataMember(n).into()),
-        }
-        let meta_index = entries
-            .iter()
-            .position(|e| name::matches(&e.name, &e.raw, METADATA_MEMBER))
-            .ok_or(Malformed::NoMetadataMember)?;
+        let meta_index = match locate(&entries, &names, METADATA_MEMBER) {
+            Located::One(i) => i,
+            Located::None => return Err(Malformed::NoMetadataMember.into()),
+            Located::Several(n) => return Err(Malformed::DuplicateMetadataMember(n).into()),
+        };
 
         // Buffering here is deliberate and is not the rule the payload lives
         // under: the metadata member is a small TOML document, and every
@@ -190,22 +223,17 @@ pub(crate) fn locate_payload(
 ) -> Result<usize> {
     name::check_payload_name(payload_file)?;
 
-    match central::count(names, payload_file) {
-        0 => return Err(Malformed::NoPayloadMember(payload_file.to_owned()).into()),
-        1 => {}
-        count => {
+    let i = match locate(entries, names, payload_file) {
+        Located::One(i) => i,
+        Located::None => return Err(Malformed::NoPayloadMember(payload_file.to_owned()).into()),
+        Located::Several(count) => {
             return Err(Malformed::DuplicatePayloadMember {
                 name: payload_file.to_owned(),
                 count,
             }
             .into())
         }
-    }
-
-    let i = entries
-        .iter()
-        .position(|e| name::matches(&e.name, &e.raw, payload_file))
-        .ok_or_else(|| Malformed::NoPayloadMember(payload_file.to_owned()))?;
+    };
 
     // SPEC 2.3 requires a regular file entry, so every other type an archive
     // can record is excluded rather than just symbolic links.

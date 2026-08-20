@@ -6,7 +6,7 @@
 mod support;
 
 use std::io::{Read, Write};
-use support::{metadata, open, raw_zip, Member};
+use support::{metadata, open, payload_of, raw_zip, Member};
 
 use slpc::{Error, Malformed, NameError, Unsupported, METADATA_MEMBER, VERSION_KEY};
 use toml_edit::DocumentMut;
@@ -37,12 +37,6 @@ fn pipe(bytes: &[u8]) -> ReadOnly {
 
 fn doc(text: &str) -> DocumentMut {
     text.parse().unwrap()
-}
-
-fn payload_of(c: &mut slpc::Container<std::io::Cursor<Vec<u8>>>) -> Vec<u8> {
-    let mut got = Vec::new();
-    c.payload().unwrap().read_to_end(&mut got).unwrap();
-    got
 }
 
 /// Every member of an archive, in order, with its compression method.
