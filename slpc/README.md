@@ -25,8 +25,8 @@ the member's bytes for a caller who wants a different parser or a hash.
 
 ## Writing
 
-Four free functions, because none of them takes or returns a container: each
-reads a stream and writes a stream.
+Nothing here takes or returns a container. Each of these reads a stream and
+writes a stream, so a rewrite cannot accidentally hold a payload in memory.
 
 ```no_run
 use slpc::toml_edit::DocumentMut;
@@ -45,9 +45,40 @@ Building metadata from nothing has no formatting to preserve, so there is
 nothing for that conversion to lose.
 
 `pack_reader` takes a payload from any `Read` and needs no `Seek` at either end,
-so a container can be packed from a pipe into a socket. `rewrite_metadata`
-replaces a container's metadata and copies every other member through
-untouched, compressed members included.
+so a container can be packed from a pipe into a socket.
+
+## Changing one that already exists
+
+`Repack` replaces the metadata, the payload, or both. Every other member is
+copied through as stored bytes, in the order it arrived in, whether or not this
+build can decompress it — which is what the specification requires of an
+implementation rewriting a container, and what lets one be changed without being
+fully understood.
+
+```no_run
+fn main() -> Result<(), slpc::Error> {
+    let source = std::fs::File::open("report.pdf.slpc")?;
+    let out = std::fs::File::create("report-v2.pdf.slpc")?;
+
+    slpc::Repack::new(source)
+        .payload_file("report-v2.pdf")?
+        .write(out)?;
+    Ok(())
+}
+```
+
+The source and the destination both seek: a ZIP's central directory is at the
+end of the file, and a member copied through already knows its compressed size,
+which belongs in the header rather than in a promise of one to come. Packing has
+neither constraint and keeps its `Write`-only destination.
+
+A payload written under a new name carries `payload.file` with it. A payload
+written under the name the container already used leaves the metadata member
+alone, byte for byte. `rewrite_metadata` and `rewrite_metadata_bytes` are the
+metadata-only case, which should not need a builder to say.
+
+Everything on the way out is checked against the rules the read path reads by,
+so what this writes is what it would accept back.
 
 ## Validating
 

@@ -1,6 +1,6 @@
 [package]
 name = "slipcase"
-description = "Pack, unpack, inspect, and validate slipcase containers: a ZIP holding a payload file and the TOML metadata that describes it"
+description = "Pack, unpack, repack, inspect, and validate slipcase containers: a ZIP holding a payload file and the TOML metadata that describes it"
 homepage = "https://github.com/excelano/slipcase"
 readme = "README.md"
 keywords = ["slipcase", "container", "metadata", "zip", "cli"]
@@ -40,7 +40,7 @@ maintainer = "David M. Anderson <david.anderson@excelano.com>"
 # mid-sentence comes out broken in `apt show`.
 extended-description = """
 slipcase attaches metadata to a file without changing it. A .slpc container is a ZIP archive holding one payload file of any type together with a TOML document describing it, so that copying, moving, or sending the payload carries its metadata along.
-Four verbs: pack, unpack, info, and validate. The format is specified independently of this tool, and ordinary ZIP utilities can read a container without it."""
+Five verbs: pack, unpack, repack, info, and validate. The format is specified independently of this tool, and ordinary ZIP utilities can read a container without it."""
 section = "utils"
 priority = "optional"
 depends = "libc6, libgcc-s1"

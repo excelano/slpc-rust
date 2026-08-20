@@ -80,7 +80,7 @@ pub struct Container<R> {
     payload_file: String,
     /// `None` when `slipcase_version` is one this build does not implement, in
     /// which case the payload was never located. See [`Container::payload`].
-    payload_index: Option<usize>,
+    pub(crate) payload_index: Option<usize>,
 }
 
 impl Container<std::fs::File> {

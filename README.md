@@ -67,14 +67,16 @@ Intel and ARM, each with a `.sha256` beside it.
 
 <!-- shared:verbs -->
 ```
-slipcase pack report.pdf --meta owner.toml     # writes report.pdf.slpc
-slipcase info report.pdf.slpc                  # prints the metadata, verbatim
-slipcase validate report.pdf.slpc              # exit 0 if conformant
-slipcase unpack report.pdf.slpc --dest ./out   # writes the payload and nothing else
+slipcase pack report.pdf --meta owner.toml       # writes report.pdf.slpc
+slipcase info report.pdf.slpc                    # prints the metadata, verbatim
+slipcase repack report.pdf.slpc --meta new.toml  # changes it in place, keeping the rest
+slipcase validate report.pdf.slpc                # exit 0 if conformant
+slipcase unpack report.pdf.slpc --dest ./out     # writes the payload and nothing else
 ```
 <!-- /shared:verbs -->
 
-Wherever a file is read, `-` names standard input.
+Wherever a file is read, `-` names standard input, and wherever one is written it
+names standard output.
 
 <!-- shared:exit-codes -->
 Exit codes tell success from bad input, from a bad command line, from a container this build cannot judge. `slipcase --help` states the contract.

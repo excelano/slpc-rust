@@ -326,3 +326,237 @@ fn version_and_help_have_both_spellings() {
         assert_eq!(code(&s.run(&flags)), 0);
     }
 }
+
+// --- repack ----------------------------------------------------------------
+
+/// A container the tool itself cannot write: one carrying a member and a
+/// metadata key that mean nothing to it, which is what SPEC 3 requires a
+/// rewrite to preserve.
+fn container_with_extras() -> Vec<u8> {
+    use std::io::Write;
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    w.start_file("slipcase.metadata.toml", opts).unwrap();
+    w.write_all(
+        b"# hand written\nslipcase_version = \"1.0\"\ntitle = \"the quarterly\"\n\n[payload]\nfile = \"a.txt\"\n",
+    )
+    .unwrap();
+    w.start_file("a.txt", opts).unwrap();
+    w.write_all(b"first\n").unwrap();
+    w.start_file("notes.md", opts).unwrap();
+    w.write_all(b"a member nothing here understands\n").unwrap();
+    w.finish().unwrap().into_inner()
+}
+
+/// Every member of a container on disk, in order.
+fn member_names(path: &Path) -> Vec<String> {
+    let f = std::fs::File::open(path).unwrap();
+    let mut a = zip::ZipArchive::new(f).unwrap();
+    (0..a.len())
+        .map(|i| a.by_index_raw(i).unwrap().name().to_owned())
+        .collect()
+}
+
+#[test]
+fn repack_changes_the_metadata_in_place() {
+    let s = Sandbox::new();
+    s.file("c.slpc", &container_with_extras());
+    s.file(
+        "m.toml",
+        b"slipcase_version = \"1.0\"\ntitle = \"revised\"\n\n[payload]\nfile = \"a.txt\"\n",
+    );
+
+    let o = s.run(&["repack", "--meta", "m.toml", "c.slpc"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&s.run(&["info", "c.slpc"])).contains("revised"));
+    assert_eq!(code(&s.run(&["validate", "c.slpc"])), 0);
+}
+
+#[test]
+fn repack_replaces_the_payload_and_moves_payload_file_with_it() {
+    let s = Sandbox::new();
+    s.file("c.slpc", &container_with_extras());
+    s.file("b.txt", b"second\n");
+
+    let o = s.run(&["repack", "--payload", "b.txt", "c.slpc"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+
+    // The old member is replaced rather than joined, and it keeps its place.
+    assert_eq!(
+        member_names(&s.path().join("c.slpc")),
+        ["slipcase.metadata.toml", "b.txt", "notes.md"]
+    );
+    assert!(out(&s.run(&["info", "c.slpc"])).contains("file = \"b.txt\""));
+
+    std::fs::create_dir(s.path().join("out")).unwrap();
+    assert_eq!(code(&s.run(&["unpack", "c.slpc", "--dest", "out"])), 0);
+    assert_eq!(
+        std::fs::read(s.path().join("out/b.txt")).unwrap(),
+        b"second\n"
+    );
+}
+
+#[test]
+fn repack_preserves_what_it_does_not_recognise() {
+    // SPEC 3: members an implementation does not recognize survive a rewrite,
+    // and so do metadata keys. Nothing else in this suite can reach that
+    // requirement, because nothing else changes a container that already
+    // exists.
+    let s = Sandbox::new();
+    s.file("c.slpc", &container_with_extras());
+    s.file("b.txt", b"second\n");
+
+    assert_eq!(code(&s.run(&["repack", "--payload", "b.txt", "c.slpc"])), 0);
+
+    let names = member_names(&s.path().join("c.slpc"));
+    assert!(names.contains(&"notes.md".to_owned()), "{names:?}");
+
+    let metadata = out(&s.run(&["info", "c.slpc"]));
+    assert!(metadata.contains("title = \"the quarterly\""), "{metadata}");
+    assert!(metadata.starts_with("# hand written\n"), "{metadata}");
+
+    // And the member itself, byte for byte.
+    let f = std::fs::File::open(s.path().join("c.slpc")).unwrap();
+    let mut a = zip::ZipArchive::new(f).unwrap();
+    let mut notes = String::new();
+    std::io::Read::read_to_string(&mut a.by_name("notes.md").unwrap(), &mut notes).unwrap();
+    assert_eq!(notes, "a member nothing here understands\n");
+}
+
+#[test]
+fn repack_leaves_the_container_alone_when_it_refuses() {
+    let s = Sandbox::new();
+    s.file("c.slpc", &container_with_extras());
+    let before = std::fs::read(s.path().join("c.slpc")).unwrap();
+    s.file("b.txt", b"second\n");
+
+    // A name another member already carries, which SPEC 2.1 forbids.
+    let o = s.run(&[
+        "repack",
+        "--payload",
+        "b.txt",
+        "--name",
+        "notes.md",
+        "c.slpc",
+    ]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(err(&o).contains("notes.md"), "{}", err(&o));
+
+    assert_eq!(std::fs::read(s.path().join("c.slpc")).unwrap(), before);
+    // And nothing half written left beside it.
+    let left: Vec<_> = std::fs::read_dir(s.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left.len(), 2, "{left:?}");
+}
+
+#[test]
+fn repack_needs_something_to_change() {
+    let s = Sandbox::new();
+    s.file("c.slpc", &container_with_extras());
+    assert_eq!(code(&s.run(&["repack", "c.slpc"])), 2);
+}
+
+#[test]
+fn repack_moves_a_container_through_a_pipeline() {
+    let s = Sandbox::new();
+    s.file("c.slpc", &container_with_extras());
+
+    // Metadata in on standard input, the container out on standard output.
+    let o = s.pipe(
+        &["repack", "--meta", "-", "c.slpc", "-o", "-"],
+        b"slipcase_version = \"1.0\"\ntitle = \"piped\"\n\n[payload]\nfile = \"a.txt\"\n",
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+
+    s.file("piped.slpc", &o.stdout);
+    assert_eq!(code(&s.run(&["validate", "piped.slpc"])), 0);
+    assert!(out(&s.run(&["info", "piped.slpc"])).contains("piped"));
+    // The source was not touched, because a destination was named.
+    assert!(out(&s.run(&["info", "c.slpc"])).contains("the quarterly"));
+}
+
+#[test]
+fn repack_from_standard_input_needs_somewhere_to_write() {
+    let s = Sandbox::new();
+    s.file(
+        "m.toml",
+        b"slipcase_version = \"1.0\"\n\n[payload]\nfile = \"a.txt\"\n",
+    );
+    let o = s.pipe(
+        &["repack", "--meta", "m.toml", "-"],
+        &container_with_extras(),
+    );
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(err(&o).contains("-o"), "{}", err(&o));
+}
+
+#[test]
+fn repack_will_not_read_standard_input_twice() {
+    let s = Sandbox::new();
+    s.file("c.slpc", &container_with_extras());
+    let o = s.pipe(
+        &[
+            "repack",
+            "--meta",
+            "-",
+            "--payload",
+            "-",
+            "--name",
+            "b.txt",
+            "c.slpc",
+        ],
+        b"x",
+    );
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(err(&o).contains("standard input"), "{}", err(&o));
+}
+
+#[test]
+fn repack_of_a_version_this_build_cannot_speak_to_is_no_verdict() {
+    let s = Sandbox::new();
+    s.file("future.slpc", &future_container());
+    s.file(
+        "m.toml",
+        b"slipcase_version = \"1.0\"\n\n[payload]\nfile = \"a.txt\"\n",
+    );
+
+    let o = s.run(&["repack", "--meta", "m.toml", "future.slpc"]);
+    assert_eq!(code(&o), 3, "{}", err(&o));
+    assert!(err(&o).contains("9.4"), "{}", err(&o));
+}
+
+#[cfg(unix)]
+#[test]
+fn repack_keeps_the_containers_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Sandbox::new();
+    let c = s.file("c.slpc", &container_with_extras());
+    s.file("b.txt", b"second\n");
+    std::fs::set_permissions(&c, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+    assert_eq!(code(&s.run(&["repack", "--payload", "b.txt", "c.slpc"])), 0);
+
+    let mode = std::fs::metadata(&c).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o640, "a rename must not narrow a container to 0600");
+}
+
+#[cfg(unix)]
+#[test]
+fn repack_through_a_symlink_changes_the_container_and_not_the_link() {
+    let s = Sandbox::new();
+    s.file("c.slpc", &container_with_extras());
+    s.file("b.txt", b"second\n");
+    std::os::unix::fs::symlink("c.slpc", s.path().join("link.slpc")).unwrap();
+
+    let o = s.run(&["repack", "--payload", "b.txt", "link.slpc"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+
+    assert!(
+        s.path().join("link.slpc").is_symlink(),
+        "the link was replaced by a file"
+    );
+    assert!(out(&s.run(&["info", "c.slpc"])).contains("file = \"b.txt\""));
+}

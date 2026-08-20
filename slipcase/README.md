@@ -58,25 +58,34 @@ Intel and ARM, each with a `.sha256` beside it.
 
 <!-- shared:verbs -->
 ```
-slipcase pack report.pdf --meta owner.toml     # writes report.pdf.slpc
-slipcase info report.pdf.slpc                  # prints the metadata, verbatim
-slipcase validate report.pdf.slpc              # exit 0 if conformant
-slipcase unpack report.pdf.slpc --dest ./out   # writes the payload and nothing else
+slipcase pack report.pdf --meta owner.toml       # writes report.pdf.slpc
+slipcase info report.pdf.slpc                    # prints the metadata, verbatim
+slipcase repack report.pdf.slpc --meta new.toml  # changes it in place, keeping the rest
+slipcase validate report.pdf.slpc                # exit 0 if conformant
+slipcase unpack report.pdf.slpc --dest ./out     # writes the payload and nothing else
 ```
 <!-- /shared:verbs -->
 
-Four verbs, each doing one thing the format supports. `pack` sets both required
+Five verbs, each doing one thing the format supports. `pack` sets both required
 metadata keys itself, so a `--meta` file that contradicts either is refused
 rather than silently overwritten, and a payload whose filename cannot be a
 member name is rejected rather than renamed. `unpack` writes the payload and,
 with `--metadata`, the metadata document; nothing else in the archive reaches
-disk. Neither verb overwrites an existing file without `--force`, and both write
-through a rename, so a run that fails partway leaves nothing behind.
+disk. `repack` changes the metadata, the payload, or both, and copies every
+other member of the archive through untouched — which is how a container is
+changed without losing what this tool does not understand, and why unpacking and
+packing again is the wrong way to do it.
 
-Wherever a file is read, `-` names standard input. `pack -` streams and needs
-`--name`, since a pipe carries no filename to record. The reading verbs spool
-first, because a ZIP's central directory is at the end of the file and there is
-no seeking in a pipe.
+`repack` writes back over the container it was given unless `-o` names somewhere
+else. It goes through a temporary file and a rename either way, and it reads back
+what it wrote before replacing anything, so the failure that leaves you without a
+container does not arise. Nothing else overwrites an existing file without
+`--force`.
+
+Wherever a file is read, `-` names standard input, and wherever one is written it
+names standard output. `pack -` streams and needs `--name`, since a pipe carries
+no filename to record. The reading verbs spool first, because a ZIP's central
+directory is at the end of the file and there is no seeking in a pipe.
 
 <!-- shared:exit-codes -->
 Exit codes tell success from bad input, from a bad command line, from a container this build cannot judge. `slipcase --help` states the contract.

@@ -1,6 +1,6 @@
 # slpc-rust — Design Document
 
-**Status:** released. 0.1.1 is on crates.io, with binaries, Homebrew, and Debian packages. 0.2.0 is built and unreleased: it agrees with the conformance corpus on 75 of 76 cases, the exception being a corpus bug.
+**Status:** built and released. Which version is current, and what shipped with it, live in the git tags and on crates.io, which is where they stay right without anyone editing this file.
 **Document version:** 2026-08-20
 **Implements:** slipcase specification 1.0
 **Section references:** `SPEC §2.3` is the specification in `excelano/slipcase`; a bare `§4.3` is this document. The two number their sections independently and both have a §3 and a §5, so neither is safe to read from context.
@@ -84,13 +84,20 @@ slpc::pack_file(&payload_path, metadata, writer)?;            // name taken from
 slpc::rewrite_metadata(reader, &document, writer)?;
 slpc::rewrite_metadata_bytes(reader, &bytes, writer)?;
 slpc::validate(reader)?;   // -> Verdict
+
+slpc::Repack::new(reader)          // change a container that already exists
+    .metadata(&document)           // also: .metadata_bytes(&bytes)
+    .payload(name, reader)         // also: .payload_file(&path)
+    .write(writer)?;
 ```
 
 The container is `mut` because the archive lends out one member at a time, which is the ZIP crate's shape rather than a choice made here.
 
 **The payload is never read into memory.** Payloads are arbitrary files of arbitrary size, and a library that returns `Vec<u8>` decides for its caller that the file fits in RAM.
 
-**The four writing operations are free functions**, beside `validate` rather than beside `Container`. Not one of them takes or returns a container: each reads a stream and writes a stream, while `Container` means one thing, a container open for reading. Hanging them off it would be choosing a namespace rather than describing a relationship, which is the difference between `File::create` and `fs::copy`.
+**Nothing on the write side takes or returns a container.** Each operation reads a stream and writes a stream, while `Container` means one thing, a container open for reading. Hanging the write path off it would be choosing a namespace rather than describing a relationship, which is the difference between `File::create` and `fs::copy`. That is why packing and rewriting metadata are free functions beside `validate`.
+
+**`Repack` is a type because its arguments are optional and independent.** Metadata, payload, or both, and three functions each taking the source and one replacement do not compose into the fourth: running two of them in sequence would mean buffering a whole container between them. A builder says in one call what the container is to become and then makes one pass. `rewrite_metadata` and `rewrite_metadata_bytes` stay as they are, because the case with one thing to change should not need a builder to express, and because they were published before this existed.
 
 **No vocabulary.** The library exposes the metadata document and typed accessors for the two structural keys. It defines no others, validates no others, and has no opinion on what any of them mean.
 
@@ -104,7 +111,7 @@ The bytes are for a caller who wants a different parser, a schema validator, or 
 
 ### 4.3 Packing
 
-`pack_reader` takes a name and a `Read`, not a `Read + Seek`. Requiring seek would allow two passes over the payload to compute its length and checksum before the local header goes down, and it would also rule out pipes, sockets, and anything generated as it is written, which are the reason the reader form exists at all. The length is therefore unknown at the moment the header is written, and the member goes out with a data descriptor, which §3 confirmed the crate emits over a writer that implements only `Write`. That settles the other bound too: nothing on the write side asks a caller for `Seek`, so a container can be packed straight into a socket or a pipe. The specification constrains none of this.
+`pack_reader` takes a name and a `Read`, not a `Read + Seek`. Requiring seek would allow two passes over the payload to compute its length and checksum before the local header goes down, and it would also rule out pipes, sockets, and anything generated as it is written, which are the reason the reader form exists at all. The length is therefore unknown at the moment the header is written, and the member goes out with a data descriptor, which §3 confirmed the crate emits over a writer that implements only `Write`. That settles the other bound too: **packing** asks a caller for no `Seek` at either end, so a container can be packed from a pipe straight into a socket. The specification constrains none of this. Repacking is the other case and asks for both, for the reason in §4.4.
 
 `pack_file` has neither problem, because a file on disk can be measured and read twice. It goes through the same streaming core anyway, and its member goes out with a data descriptor like the other's. Both are conformant, and one path is easier to keep right than two.
 
@@ -114,11 +121,21 @@ The bytes are for a caller who wants a different parser, a schema validator, or 
 
 There is no bare `pack`. The two forms differ in more than convenience — one validates a name it was handed, the other derives a name and can fail on a file it cannot express — and a call site reads better for saying which one it meant. The read path keeps `open` and `read` rather than matching this, because `Container::open(path)` follows `File::open` and that convention is worth more than symmetry across the two halves of the API.
 
-### 4.4 Rewriting
+### 4.4 Repacking
 
-The specification requires that members an implementation does not recognize survive a rewrite. `rewrite_metadata` copies every member through and substitutes only `slipcase.metadata.toml`, which is why it is a free function over a reader and a writer rather than a mutable container that gets saved: a rewrite that streams cannot accidentally hold the payload in memory, and a container is never partly in RAM and partly on disk.
+The specification requires that members an implementation does not recognize survive a rewrite. `Repack` copies every member through and substitutes only the ones being replaced, which is why it is a reader and a writer rather than a mutable container that gets saved: a rewrite that streams cannot accidentally hold the payload in memory, and a container is never partly in RAM and partly on disk.
 
-Copying a member whose compression method the crate cannot decompress means copying its compressed bytes untouched, which §3 confirmed the crate will do. It is what allows a container to be rewritten without being fully understood.
+Copying a member whose compression method the crate cannot decompress means copying its compressed bytes untouched, which §3 confirmed the crate will do. It is what allows a container to be rewritten without being fully understood. A member nothing is replacing comes out byte for byte, and that includes the metadata member when nothing about it changed — replacing a payload under the name the container already used leaves the document exactly where it was, rather than parsing and re-serializing it for no reason.
+
+**`payload.file` is set by the library exactly when the library is writing the payload member.** Both packing forms set it, and so does repacking a payload. A metadata-only rewrite does not, because there the caller may be repointing the key at a member already in the archive and only they know which — the key is checked against the archive instead.
+
+Where a payload does arrive with a name of its own, a document handed in has that key set rather than checked. This is the one place the library overwrites a value a caller supplied, and it is not the silent overwrite §4.3 refuses: the value the document carried named the member being replaced, so it is not a second opinion about what is being written, and the natural source of that document is the container itself, which necessarily still names the old payload. Bytes handed in are refused rather than corrected, because correcting them would mean they were no longer the bytes handed in, and storing them exactly is the only reason that form exists.
+
+**A payload cannot be written under a name another member already carries.** SPEC §2.1 allows a container exactly one member under `payload.file`, and which of two was the payload would depend on the order they sat in. The name is therefore checked against the archive the payload is going into rather than the one it came from — the same archive here, and not the same elsewhere.
+
+**Repacking writes to a stream it can seek in, and packing does not.** A member copied through already knows its compressed size. A writer that cannot seek has nowhere to put that size except a data descriptor after the data, which is a promise to a reader walking forward that a length is coming; writing the size into the local header is simpler and is the only form such a reader can use without decompressing. The bound costs a caller nothing they were not already paying, because repacking's source has to seek regardless — a ZIP's central directory is at the end of the file, so a pipe was never a possible source. Packing keeps its `Write`-only destination, since a payload arriving from a pipe genuinely has no size to write down.
+
+The bug that made this urgent rather than merely tidy is worth recording, because it is invisible from inside: `zip` 8.6 sets the data descriptor flag on a raw-copied member in a stream writer and then writes no descriptor, so the local header claims a length of zero and nothing supplies the real one. Every reader that walks the central directory is unaffected, which is this library's own reader and every test it had; Info-ZIP walks forward, calls the result overlapping components, and exits 12. A test now asserts that no member comes out promising a descriptor, and it was watched failing against the old writer before it was kept.
 
 **The library validates what it is about to write, against the rules it reads by.** Metadata is parsed and the payload located by the same code the read path uses, so what this writes is what it would accept back, and neither half can drift from the other or from a specification that grows a rule. A key that is present and is a string still describes nothing if it points at a member that is not there, and a caller free to edit the document is free to break it that way. Without these checks, `rewrite_metadata_bytes` is a way to produce a non-conformant container from the reference implementation. The usual argument for the opposite is that malformed containers are needed for tests, and §7 answers it: the conformance corpus is built upstream, deliberately not with this tool.
 
@@ -140,20 +157,25 @@ The specification requires that an implementation not assume it can read a conta
 
 ## 5. The CLI
 
-Four verbs. Each does one thing the format supports.
+Five verbs. Each does one thing the format supports.
 
 - `pack <payload> [--name <n>] [--meta <file.toml>] [-o <out.slpc>]` — writes a container. Default output is the payload's name with `.slpc` appended, per the naming convention. With no `--meta`, generates metadata carrying only the two required keys.
 - `unpack <file.slpc> [--dest <dir>] [--metadata]` — writes the payload. `--metadata` also writes `slipcase.metadata.toml`. Nothing else in the archive is written to disk, as the specification requires.
+- `repack <file.slpc> [--meta <file.toml>] [--payload <file>] [--name <n>] [-o <out.slpc>]` — changes the metadata, the payload, or both, and copies every other member through. At least one of the two, since a repack with nothing to change would read as a command that did something.
 - `info <file.slpc>` — prints the metadata.
-- `validate <file.slpc>` — reports conformance. A container declaring a version this build does not implement is not reported conformant, because everything past the two required keys is a rule this version's text states and none of it was checked. That is exit 1: a refusal, not a verdict on the file.
+- `validate <file.slpc>` — reports conformance. A container declaring a version this build does not implement is not reported conformant, because everything past the two required keys is a rule this version's text states and none of it was checked. That is exit 3: a refusal to answer, not a verdict on the file.
 
 Behavior that is decided rather than obvious:
 
 - **Both required keys are set for the user**, by the library rather than by the CLI: `payload.file` from the payload's own filename, `slipcase_version` from the build. §4.3. A `--meta` file that sets `payload.file` to something else is an error rather than a silent overwrite.
 - **A payload whose filename cannot be a member name is rejected, not renamed.** A local file may contain characters that `payload.file` forbids; packing it would produce a container that cannot name its own payload.
+- **`repack` exists because unpacking and packing again is not the same operation.** SPEC §3 requires that members an implementation does not recognize survive a rewrite, and unpack-then-pack discards every one of them. Without this verb the tool has no way to change a container that keeps what it does not understand, and the workflow it teaches instead is the one the specification forbids.
+- **`repack` writes back over the container it was given**, unless `-o` names somewhere else. A verb that named its target and then refused to touch it would send every caller through `repack -o tmp && mv tmp target`, which is the same operation with the atomicity taken out and no cleanup on failure. `--force` is not the gate here, because `--force` means "there is an unrelated file in your way": naming the container is the consent. What is at risk is bounded to the metadata document the caller replaced, since the payload and every other member are copied through untouched.
+- **`repack` reads back what it wrote before replacing anything.** The library validates the metadata it is about to store, so this checks the archive around it. It costs a central-directory read of a file already in the page cache, and it is the difference between replacing the only copy of a container on faith and doing it on evidence.
+- **Writing in place resolves the path first**, so a container reached through a symbolic link is replaced rather than the link being replaced by a file, and the container's permissions are carried onto the temporary file before the rename. What a rename cannot carry is ownership, which is the standing cost of replacing a file rather than writing into it, and it is shared with `sed -i` and with every editor's default.
 - **Neither `pack` nor `unpack` overwrites an existing file without `--force`.** Both write to a temporary file beside the destination and rename it into place, so a run that fails partway leaves nothing behind rather than a truncated container that looks like one, and `--force` cannot destroy the old file and then fail to produce the new. `unpack --metadata` reserves both destinations before writing either.
 - **Exit codes:** 0 for success or conformance, 1 for bad input, 2 for a bad command line, 3 for no verdict. The first three split on whose mistake it is: 2 says re-read `--help`, 1 says go and look at the file, and a non-conformant container shares 1 with an unreadable one because that distinction is carried in the message. The fourth is against the fleet's convention, which keeps the space to three, and it is earned because this distinction is normative rather than convenient: a container whose metadata cannot be read, or which declares another version, is one SPEC §3 forbids calling non-conformant, and with one code for both a caller branching on the status reads it as exactly that.
-- **`-` names standard input**, per the fleet convention, which is worth honoring because a caller writes `-` by reflex and a tool that reads it as a filename fails in a way that looks like the caller's own bug. `pack -` is the case the library's reader form exists for and streams without buffering, though it needs `--name`, since there is no filename to take `payload.file` from. The reading verbs cannot stream at all: a ZIP's central directory is at its end, so `info -`, `validate -`, and `unpack -` spool standard input to a temporary file and open that. The cost is the CLI's to pay rather than the library's, which keeps its `Read + Seek` bound and never spools for a caller who already has a file.
+- **`-` names standard input where a file is read, and standard output where one is written.** The reading half is the fleet convention, which is worth honoring because a caller writes `-` by reflex and a tool that reads it as a filename fails in a way that looks like the caller's own bug. The writing half is this tool's own extension of it, and it is what lets a container move through a pipeline: `info | edit | repack --meta -` is the shape the verb is for. Writing a container to a terminal is refused rather than done, since a screenful of ZIP helps nobody. Only one argument may be `-`, because there is one standard input. Standard output is spooled to a temporary file and copied out at the end, the mirror of what the reading verbs already do with standard input: it is what gives repacking the seekable destination §4.4 wants, and it means a pipeline never receives the first half of a container that then failed. `pack -` is the case the library's reader form exists for and streams without buffering, though it needs `--name`, since there is no filename to take `payload.file` from. The reading verbs cannot stream at all: a ZIP's central directory is at its end, so `info -`, `validate -`, and `unpack -` spool standard input to a temporary file and open that. The cost is the CLI's to pay rather than the library's, which keeps its `Read + Seek` bound and never spools for a caller who already has a file.
 - `--version`, `-V`, `--help`, `-h`, per the fleet convention.
 
 ---
@@ -187,7 +209,7 @@ The corpus is built upstream rather than with this implementation, and a corpus 
 
 **Desktop integration** — an opener, a file association, an icon, a shell extension. Separate work, separate platforms, separate repository if ever.
 
-**Metadata editing from the CLI.** The library exposes the document; a caller can change anything. A `set key=value` verb needs a convention for whether `3` is an integer or a string, and inventing one here would be defining a vocabulary the format deliberately does not have.
+**Key-level metadata editing from the CLI.** `repack --meta` replaces the document wholesale, which needs no syntax of its own: a TOML file goes in as a TOML file. A `set key=value` verb would need a convention for whether `3` is an integer or a string, and inventing one here would be defining a vocabulary the format deliberately does not have. SPEC §5 leaves a vocabulary out of this version rather than out of every version, so the name stays free for one that has something to operate on.
 
 **Bindings for other languages.** Every other language gets a native implementation reading the same specification.
 

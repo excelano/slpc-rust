@@ -94,6 +94,14 @@ pub enum Malformed {
         /// How many members carry it.
         count: usize,
     },
+    /// The archive already holds a member under the name a payload is being
+    /// written as (SPEC 2.1).
+    ///
+    /// Reached only by repacking, where the payload arrives with a name and the
+    /// container already has one. Writing it anyway would leave two members
+    /// carrying that name, and which of them was the payload would depend on
+    /// the order they sit in.
+    PayloadNameTaken(String),
     /// A file on disk is called something `payload.file` cannot express (SPEC 2.3).
     ///
     /// The payload is rejected rather than renamed. A container that cannot
@@ -155,6 +163,10 @@ impl fmt::Display for Malformed {
             Self::DuplicatePayloadMember { name, count } => write!(
                 f,
                 "{count} members are named {name:?}; a container has exactly one payload (SPEC 2.1)"
+            ),
+            Self::PayloadNameTaken(n) => write!(
+                f,
+                "the container already has a member named {n:?}, so writing the payload under that name would leave it with two (SPEC 2.1)"
             ),
             Self::PayloadPathName { path, cause } => write!(
                 f,

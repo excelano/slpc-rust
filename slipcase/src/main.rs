@@ -1,4 +1,4 @@
-//! The slipcase command-line tool: four verbs over the `slpc` library.
+//! The slipcase command-line tool: five verbs over the `slpc` library.
 //
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
@@ -34,7 +34,8 @@ Exit codes:
 non-conformant when its metadata member cannot be read, or when it declares a
 version this build does not implement. Both are answers, not failures.
 
-Wherever a file is read, `-` names standard input.";
+Wherever a file is read, `-` names standard input. Wherever one is written,
+`-` names standard output.";
 
 #[derive(Parser)]
 #[command(name = "slipcase", version, about, after_help = EXIT_CODES)]
@@ -49,6 +50,8 @@ enum Verb {
     Pack(Pack),
     /// Write a container's payload to disk.
     Unpack(Unpack),
+    /// Change a container's metadata or payload, keeping everything else.
+    Repack(Repack),
     /// Print a container's metadata.
     Info(Info),
     /// Report whether a container is conformant.
@@ -69,6 +72,30 @@ struct Pack {
     #[arg(short, long, value_name = "FILE")]
     output: Option<PathBuf>,
     /// Overwrite an existing file.
+    #[arg(long)]
+    force: bool,
+}
+
+/// At least one of `--meta` and `--payload`: a repack with nothing to change
+/// would read as a command that did something.
+#[derive(Args)]
+#[command(group(clap::ArgGroup::new("change").args(["meta", "payload"]).required(true).multiple(true)))]
+struct Repack {
+    /// The container to change. `-` reads standard input, which needs -o.
+    container: PathBuf,
+    /// A TOML file to become the container's metadata. `-` reads standard input.
+    #[arg(long, value_name = "FILE")]
+    meta: Option<PathBuf>,
+    /// A file to become the container's payload. `-` reads standard input, which needs --name.
+    #[arg(long, value_name = "FILE")]
+    payload: Option<PathBuf>,
+    /// The name to record in payload.file. Taken from the payload's own filename otherwise.
+    #[arg(long, value_name = "NAME", requires = "payload")]
+    name: Option<String>,
+    /// Where to write. Rewrites the container in place otherwise.
+    #[arg(short, long, value_name = "FILE")]
+    output: Option<PathBuf>,
+    /// Overwrite an existing --output file.
     #[arg(long)]
     force: bool,
 }
@@ -116,13 +143,14 @@ fn run(cli: Cli) -> Result<()> {
     match cli.verb {
         Verb::Pack(a) => pack(a),
         Verb::Unpack(a) => unpack(a),
+        Verb::Repack(a) => repack(&a),
         Verb::Info(a) => info(&a.container),
         Verb::Validate(a) => validate(&a.container),
     }
 }
 
 fn pack(a: Pack) -> Result<()> {
-    let from_stdin = input::is_stdin(&a.payload);
+    let from_stdin = input::is_dash(&a.payload);
     if from_stdin && a.name.is_none() {
         return Err(Failure::new(
             "packing from standard input needs --name: there is no filename to record in payload.file.",
@@ -138,21 +166,21 @@ fn pack(a: Pack) -> Result<()> {
         Some(p) => p,
         None => default_output(&a)?,
     };
-    let mut out = Destination::new(&out_path, a.force)?;
+    let mut out = destination(&out_path, a.force)?;
 
     // The library sets payload.file and slipcase_version itself, so a --meta
     // file that sets either to something else is refused rather than quietly
     // overwritten. Nothing here has to check for that.
     match (from_stdin, a.name) {
         (true, Some(name)) => {
-            slpc::pack_reader(&name, std::io::stdin().lock(), metadata, out.file())?;
+            slpc::pack_reader(&name, std::io::stdin().lock(), metadata, out.writer())?;
         }
         (false, Some(name)) => {
             let f = std::fs::File::open(&a.payload)
                 .context(format!("cannot read {}", a.payload.display()))?;
-            slpc::pack_reader(&name, f, metadata, out.file())?;
+            slpc::pack_reader(&name, f, metadata, out.writer())?;
         }
-        (false, None) => slpc::pack_file(&a.payload, metadata, out.file())?,
+        (false, None) => slpc::pack_file(&a.payload, metadata, out.writer())?,
         (true, None) => unreachable!("checked above"),
     }
     out.commit()
@@ -182,9 +210,96 @@ fn default_output(a: &Pack) -> Result<PathBuf> {
 }
 
 fn read_metadata(path: &Path) -> Result<DocumentMut> {
-    let text = std::fs::read_to_string(path).context(format!("cannot read {}", path.display()))?;
+    let what = input::name_of(path);
+    let text = if input::is_dash(path) {
+        std::io::read_to_string(std::io::stdin().lock())
+    } else {
+        std::fs::read_to_string(path)
+    }
+    .context(format!("cannot read {what}"))?;
+
     text.parse()
-        .map_err(|e| Failure::new(format!("{} is not valid TOML: {e}", path.display())))
+        .map_err(|e| Failure::new(format!("{what} is not valid TOML: {e}")))
+}
+
+/// Where a verb writes: a named file, or standard output for `-`.
+fn destination(path: &Path, force: bool) -> Result<Destination> {
+    if input::is_dash(path) {
+        Destination::stdout()
+    } else {
+        Destination::new(path, force)
+    }
+}
+
+/// Change a container, keeping everything that is not being changed.
+///
+/// With no `-o`, the container is written back over itself: a repack that named
+/// its target and then refused to touch it would send every caller through
+/// `repack -o tmp && mv tmp target`, which is the same operation with the
+/// atomicity taken out.
+fn repack(a: &Repack) -> Result<()> {
+    // Three arguments can name standard input and there is only one of it.
+    let container_piped = input::is_dash(&a.container);
+    let sources = [Some(&a.container), a.meta.as_ref(), a.payload.as_ref()];
+    if sources
+        .into_iter()
+        .flatten()
+        .filter(|p| input::is_dash(p))
+        .count()
+        > 1
+    {
+        return Err(Failure::new(
+            "only one of the container, --meta, and --payload can read standard input.",
+        ));
+    }
+    if container_piped && a.output.is_none() {
+        return Err(Failure::new(
+            "a container read from standard input has no file to write back over. Pass -o.",
+        ));
+    }
+    if a.payload.as_deref().is_some_and(input::is_dash) && a.name.is_none() {
+        return Err(Failure::new(
+            "a payload read from standard input needs --name: there is no filename to record in payload.file.",
+        ));
+    }
+
+    // Everything that has to be read is opened before the destination is
+    // reserved, so a bad argument fails before a temporary file exists beside
+    // the container.
+    let source = input::container(&a.container)?;
+    let meta = a.meta.as_deref().map(read_metadata).transpose()?;
+
+    let mut out = match &a.output {
+        Some(p) => destination(p, a.force)?,
+        None => Destination::in_place(&a.container)?,
+    };
+
+    let mut r = slpc::Repack::new(source);
+    if let Some(d) = &meta {
+        r = r.metadata(d);
+    }
+    r = match (a.payload.as_deref(), &a.name) {
+        (None, _) => r,
+        (Some(p), Some(name)) if input::is_dash(p) => r.payload(name, std::io::stdin().lock()),
+        (Some(p), Some(name)) => {
+            let f = std::fs::File::open(p).context(format!("cannot read {}", p.display()))?;
+            r.payload(name, f)
+        }
+        (Some(p), None) => r.payload_file(p)?,
+    };
+    r.write(out.writer())?;
+
+    // Read back what was written before it replaces anything. The library
+    // validates the metadata it is about to store, so this is checking the
+    // archive around it, and it is the difference between replacing the only
+    // copy of a container on faith and doing it on evidence.
+    let verdict = slpc::validate(out.written()?)?;
+    if !verdict.is_conformant() {
+        return Err(Failure::new(format!(
+            "the container this would have written is {verdict}. Nothing was changed."
+        )));
+    }
+    out.commit()
 }
 
 fn unpack(a: Unpack) -> Result<()> {
@@ -201,7 +316,7 @@ fn unpack(a: Unpack) -> Result<()> {
     let mut metadata_out = if a.metadata {
         let bytes = c.metadata_bytes().to_vec();
         let mut d = Destination::new(&dest.join(slpc::METADATA_MEMBER), a.force)?;
-        d.file()
+        d.writer()
             .write_all(&bytes)
             .context("cannot write the metadata")?;
         Some(d)
@@ -209,7 +324,7 @@ fn unpack(a: Unpack) -> Result<()> {
         None
     };
 
-    std::io::copy(&mut c.payload()?, payload_out.file()).context("cannot write the payload")?;
+    std::io::copy(&mut c.payload()?, payload_out.writer()).context("cannot write the payload")?;
     payload_out.commit()?;
     if let Some(d) = metadata_out.take() {
         d.commit()?;

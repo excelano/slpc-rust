@@ -9,14 +9,25 @@ use std::path::Path;
 
 use crate::fail::{Context, Result};
 
-/// Whether this argument names standard input.
+/// Whether this argument is `-`: standard input where a file is read, and
+/// standard output where one is written.
 ///
 /// Every tool in the fleet takes `-` for standard input, so a caller writes it
 /// by reflex. One that reads it as a filename fails with `-: No such file or
 /// directory`, which looks like a bug in the caller's own command rather than a
-/// missing feature.
-pub fn is_stdin(path: &Path) -> bool {
+/// missing feature. The writing half is this tool's own extension of that, and
+/// it is what makes a container a thing a pipeline can carry.
+pub fn is_dash(path: &Path) -> bool {
     path.as_os_str() == "-"
+}
+
+/// What to call this argument in a message.
+pub fn name_of(path: &Path) -> String {
+    if is_dash(path) {
+        "standard input".to_owned()
+    } else {
+        path.display().to_string()
+    }
 }
 
 /// Open a container for reading, spooling standard input if that is the source.
@@ -30,7 +41,7 @@ pub fn is_stdin(path: &Path) -> bool {
 /// The temporary file is unlinked as soon as it is created, so it leaves
 /// nothing behind however this process ends.
 pub fn container(path: &Path) -> Result<File> {
-    if !is_stdin(path) {
+    if !is_dash(path) {
         return File::open(path).context(format!("cannot read {}", path.display()));
     }
 

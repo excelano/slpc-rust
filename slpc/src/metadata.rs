@@ -4,7 +4,7 @@
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
 
-use toml_edit::{DocumentMut, Item};
+use toml_edit::{value, DocumentMut, Item, Table};
 
 use crate::error::{Malformed, Result};
 use crate::{PAYLOAD_FILE_KEY, VERSION_KEY};
@@ -48,4 +48,33 @@ pub(crate) fn required_string<'d>(doc: &'d DocumentMut, key: &'static str) -> Re
         .ok_or(Malformed::MissingKey(key))?
         .as_str()
         .ok_or_else(|| Malformed::KeyNotAString(key).into())
+}
+
+/// Set a key, creating any table on the way down to it.
+///
+/// Any table this has to create is created explicitly, because indexing through
+/// a missing key leaves `toml_edit` to invent the shape and it invents
+/// `payload = { file = "..." }`. That is valid TOML and a conformant container,
+/// but it is not what SPEC 2.2's example looks like, and this is the
+/// implementation whose output people will copy. It also reads worse the moment
+/// a second key joins it under the same table.
+///
+/// The error names `payload` because that is the only intermediate there is:
+/// both keys this library knows are its own constants and only one of them is
+/// dotted.
+pub(crate) fn set(doc: &mut DocumentMut, key: &str, to: &str) -> Result<()> {
+    let path: Vec<&str> = key.split('.').collect();
+    let (last, tables) = path.split_last().expect("a key is never empty");
+
+    let mut at = doc.as_item_mut();
+    for part in tables {
+        match at.get(part) {
+            None => at[*part] = Item::Table(Table::new()),
+            Some(item) if item.is_table_like() => {}
+            Some(_) => return Err(Malformed::PayloadNotATable.into()),
+        }
+        at = &mut at[*part];
+    }
+    at[*last] = value(to);
+    Ok(())
 }

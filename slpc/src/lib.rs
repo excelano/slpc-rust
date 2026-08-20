@@ -26,7 +26,7 @@ pub use toml_edit;
 pub use container::Container;
 pub use error::{EntryKind, Error, Malformed, NameError, Result, Unsupported};
 pub use name::check_payload_name;
-pub use write::{pack_file, pack_reader, rewrite_metadata, rewrite_metadata_bytes};
+pub use write::{pack_file, pack_reader, rewrite_metadata, rewrite_metadata_bytes, Repack};
 
 /// The archive member holding the metadata (SPEC 2.1).
 pub const METADATA_MEMBER: &str = "slipcase.metadata.toml";
