@@ -17,10 +17,9 @@ name = "slipcase"
 path = "src/main.rs"
 
 [dependencies]
-# Both a path and a version: cargo builds against the sibling in this
-# workspace, and crates.io rejects a dependency that carries only a path. The
-# two crates release together, so the version here is the workspace's own.
-slpc = { path = "../slpc", version = "0.1.0" }
+# Path and version both, declared at the workspace root beside the version
+# number it has to match. See the comment there.
+slpc.workspace = true
 clap = { version = "4.6", features = ["derive"] }
 # For spooling standard input, which a ZIP reader cannot take from a pipe. The
 # tree it brings is pure Rust: libc and linux-raw-sys are declarations, not a C

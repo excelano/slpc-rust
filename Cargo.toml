@@ -3,7 +3,7 @@ resolver = "3"
 members = ["slpc", "slipcase"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["David M. Anderson"]
 license = "MIT"
@@ -15,6 +15,14 @@ repository = "https://github.com/excelano/slpc-rust"
 # that rises whenever a dependency raises its own, so the msrv job in ci.yml
 # builds at it rather than trusting this line. Raise it here and there together.
 rust-version = "1.88"
+
+# The binary's dependency on the library lives here rather than in
+# slipcase/Cargo.toml, so that it sits beside the version above and the two
+# obviously move together. crates.io rejects a path-only dependency, and a
+# version requirement cannot inherit `workspace.package.version`, so this
+# number is written twice by necessity — adjacent is the best available.
+[workspace.dependencies]
+slpc = { path = "slpc", version = "0.1.1" }
 
 # cargo-dist builds release binaries under this profile. Thin LTO rather than
 # fat: the link is a fraction of the time and the size difference on a binary

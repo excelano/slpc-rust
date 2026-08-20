@@ -6,7 +6,7 @@ This repository publishes two crates and ships one binary, so it has both a libr
 
 ## The loop
 
-1. **Bump the version.** Edit `version` in the root `Cargo.toml`, under `[workspace.package]`. Both crates inherit it, and `slipcase`'s dependency on `slpc` carries that same number, so nothing else needs touching. Update `Cargo.lock` with a build, run `cargo test`, commit.
+1. **Bump the version, in two adjacent places.** In the root `Cargo.toml`: `version` under `[workspace.package]`, which both crates inherit, and the `slpc` requirement under `[workspace.dependencies]`, which is what the published `slipcase` asks crates.io for. They live next to each other because a version requirement cannot inherit `workspace.package.version`, so the number is written twice and the only defence is that both are on screen at once. Getting the second wrong is quiet: a caret requirement on the old number still resolves, and the published binary depends on a library release older than the one it shipped with. Update `Cargo.lock` with a build, run `cargo test`, commit.
 
 2. **Check what consumers will see.** `cargo package -p slpc --list` and `cargo publish -p slpc --dry-run` package the library and compile it from the packaged copy, which catches a file `.gitignore` excluded but the build needed. `cargo doc --no-deps --open` is worth a look, since a library's documentation is its interface.
 
