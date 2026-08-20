@@ -7,6 +7,53 @@ A `.slpc` file is a ZIP archive holding a payload file of any type together with
 a TOML metadata document describing it. The two become one file, so copying,
 moving, or sending the payload carries its metadata along.
 
+## Install
+
+### Debian and Ubuntu
+
+Add the [Excelano apt repository](https://excelano.com/apt/) once:
+
+```sh
+curl -fsSL https://excelano.com/apt/setup.sh | sudo sh
+```
+
+Then install it, so `apt upgrade` keeps it current:
+
+```sh
+sudo apt install slipcase
+```
+
+Both amd64 and arm64 packages ship with every release.
+
+### Homebrew
+
+```sh
+brew install excelano/tap/slipcase
+```
+
+### crates.io
+
+```sh
+cargo install slipcase
+```
+
+### Anywhere else
+
+```sh
+curl -fsSL https://github.com/excelano/slpc-rust/releases/latest/download/slipcase-installer.sh | sh
+```
+
+PowerShell, for Windows:
+
+```powershell
+irm https://github.com/excelano/slpc-rust/releases/latest/download/slipcase-installer.ps1 | iex
+```
+
+Every release also carries plain archives for macOS, Linux, and Windows on both
+Intel and ARM, each with a `.sha256` beside it.
+
+## Using it
+
 ```
 slipcase pack report.pdf --meta owner.toml     # writes report.pdf.slpc
 slipcase info report.pdf.slpc                  # prints the metadata, verbatim
