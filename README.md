@@ -36,10 +36,6 @@ The payload is a stream and is never read into memory. Metadata is exposed as a 
 
 `DESIGN.md` records the design and the reasoning behind each decision. `RELEASING.md` is the release loop.
 
-## Status
-
-The library and the tool are built and tested. Nothing is released yet: no version is on crates.io, and there are no binaries to download.
-
 ## License
 
 MIT. See [LICENSE](LICENSE).

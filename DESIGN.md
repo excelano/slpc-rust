@@ -86,7 +86,9 @@ slpc::rewrite_metadata_bytes(reader, &bytes, writer)?;
 slpc::validate(reader)?;   // -> Verdict
 ```
 
-The container is `mut` because the archive lends out one member at a time, which is the ZIP crate's shape rather than a choice made here.\n\n**The payload is never read into memory.** Payloads are arbitrary files of arbitrary size, and a library that returns `Vec<u8>` decides for its caller that the file fits in RAM.
+The container is `mut` because the archive lends out one member at a time, which is the ZIP crate's shape rather than a choice made here.
+
+**The payload is never read into memory.** Payloads are arbitrary files of arbitrary size, and a library that returns `Vec<u8>` decides for its caller that the file fits in RAM.
 
 **The four writing operations are free functions**, beside `validate` rather than beside `Container`. Not one of them takes or returns a container: each reads a stream and writes a stream, while `Container` means one thing, a container open for reading. Hanging them off it would be choosing a namespace rather than describing a relationship, which is the difference between `File::create` and `fs::copy`.
 
@@ -118,7 +120,7 @@ The specification requires that members an implementation does not recognize sur
 
 Copying a member whose compression method the crate cannot decompress means copying its compressed bytes untouched, which is the third item in §3. It is what allows a container to be rewritten without being fully understood.
 
-**The library validates what it is about to write.** Valid TOML 1.1.0, UTF-8, both required keys present and of the right type, and `payload.file` naming a member the archive actually contains. A key that is present and is a string still describes nothing if it points at a member that is not there, and a caller free to edit the document is free to break it that way. Without these checks, `rewrite_metadata_bytes` is a way to produce a non-conformant container from the reference implementation. The usual argument for the opposite is that malformed containers are needed for tests, and §7 answers it: the conformance corpus is built upstream with `zip` and a shell script, deliberately not with this tool.
+**The library validates what it is about to write.** Valid TOML 1.1.0, UTF-8, both required keys present and of the right type, and `payload.file` naming a member the archive actually contains. A key that is present and is a string still describes nothing if it points at a member that is not there, and a caller free to edit the document is free to break it that way. Without these checks, `rewrite_metadata_bytes` is a way to produce a non-conformant container from the reference implementation. The usual argument for the opposite is that malformed containers are needed for tests, and §7 answers it: the conformance corpus is built upstream, deliberately not with this tool.
 
 ### 4.5 Errors and verdicts
 
@@ -128,7 +130,7 @@ Copying a member whose compression method the crate cannot decompress means copy
 
 **Validation returns a verdict rather than a yes or no.** Four answers, because two will not do: conformant, non-conformant with the rule it breaks, undetermined when the metadata member cannot be read at all, and out of scope when the container declares a version this build does not implement. SPEC §3 forbids reporting a container as conformant *or* as non-conformant when its metadata cannot be read, and SPEC §2.4 puts another version outside the question rather than failing it. A `Result<()>` can say neither thing, and the first version of this library discarded at its signature a distinction the error families below already drew.
 
-The specification lists compression, encryption, and Zip64 among the properties a container must not be rejected for. "I cannot read this" and "this is invalid" are therefore different answers, and collapsing them would have the implementation reporting conformant containers as broken. Validation reads the central directory and the metadata member: it confirms that a member matching `payload.file` is present and is not a symlink entry, and it never decompresses the payload. A container whose payload uses a compression method this build cannot read therefore still validates.
+The specification lists compression, encryption, and Zip64 among the properties a container must not be rejected for. "I cannot read this" and "this is invalid" are therefore different answers, and collapsing them would have the implementation reporting conformant containers as broken. Validation reads the central directory and the metadata member: it confirms that exactly one member matches `payload.file` and that the member is a regular file entry, and it never decompresses the payload. A container whose payload uses a compression method this build cannot read therefore still validates.
 
 ### 4.6 Unrecognized versions
 
@@ -173,7 +175,7 @@ Two layers.
 3. **CLI** over both.
 4. **Wire in the conformance corpus** once the specification repository has one, keeping the generated fixtures for cases it does not cover.
 
-The corpus is built upstream with `zip` and a shell script rather than with this implementation. A corpus produced by the tool it validates proves nothing, and building it with ordinary tools tests the format's own claim that ordinary tools suffice.
+The corpus is built upstream rather than with this implementation, and a corpus produced by the tool it validates proves nothing. How it is built is the specification repository's business to describe.
 
 ---
 
