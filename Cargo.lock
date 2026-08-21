@@ -322,6 +322,7 @@ name = "slpc"
 version = "0.3.0"
 dependencies = [
  "crc32fast",
+ "tempfile",
  "toml_edit",
  "zip",
 ]

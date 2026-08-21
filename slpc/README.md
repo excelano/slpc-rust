@@ -80,6 +80,22 @@ metadata-only case, which should not need a builder to say.
 Everything on the way out is checked against the rules the read path reads by,
 so what this writes is what it would accept back.
 
+## Putting one on disk
+
+Everything above writes into a stream the caller supplies. Turning on the `fs`
+feature adds `Destination`, which writes a container to a path: through a
+temporary file beside it, with the permissions a file there should have, renamed
+into place at the end. A write that fails partway leaves nothing behind rather
+than a truncated container that looks like one.
+
+```toml
+slpc = { version = "0.3", features = ["fs"] }
+```
+
+It is a feature rather than part of the default surface because a caller writing
+into a socket or a buffer should not acquire a temporary-file dependency to do
+it.
+
 ## Validating
 
 ```no_run

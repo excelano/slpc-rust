@@ -11,6 +11,8 @@
 
 mod central;
 mod container;
+#[cfg(feature = "fs")]
+mod dest;
 mod error;
 mod metadata;
 mod name;
@@ -24,6 +26,8 @@ mod write;
 pub use toml_edit;
 
 pub use container::Container;
+#[cfg(feature = "fs")]
+pub use dest::Destination;
 pub use error::{EntryKind, Error, Malformed, NameError, Result, Unsupported};
 pub use name::check_payload_name;
 pub use write::{pack_file, pack_reader, rewrite_metadata, rewrite_metadata_bytes, Repack};

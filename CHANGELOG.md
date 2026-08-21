@@ -9,6 +9,20 @@ minor bump below 1.0 is how a breaking change ships.
 This file begins at 0.3.0. Earlier releases carried no notes, and the tags and
 the commit history are the record for those.
 
+## [Unreleased]
+
+### Added
+
+- **`slpc::Destination`, behind the new `fs` feature**, which writes a container
+  to a path: through a temporary file beside it, with the permissions a file
+  there should have, renamed into place at the end. The reading side has taken a
+  path since 0.1.0 through `Container::open` and the writing side never had the
+  equivalent, so every caller putting a container on disk supplied that half
+  itself. Off by default, so a caller writing into a socket or a buffer does not
+  acquire a temporary-file dependency and the library's default tree stays at
+  fifteen crates.
+
+
 ## [0.3.0] - 2026-08-20
 
 ### Added

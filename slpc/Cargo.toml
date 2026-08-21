@@ -12,14 +12,31 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+# Writing a container to a path, rather than into a writer the caller supplies.
+# Off by default: a caller who only reads containers, or who writes into a
+# socket or a buffer, should not acquire tempfile to do it, and the tree stays
+# at fifteen crates for everyone who does not ask. Both binaries ask.
+fs = ["dep:tempfile"]
+
 [dependencies]
 # Default features link libbz2 and libzstd through bzip2-sys and zstd-sys. The
 # flate2 backend is named directly rather than through the `deflate` feature,
 # which would also pull zopfli for a compression level nothing here asks for.
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 toml_edit = "0.25"
+# The `fs` feature alone. Its tree is pure Rust: libc and linux-raw-sys are
+# declarations rather than a C library to compile.
+tempfile = { version = "3.27", optional = true }
+
+[package.metadata.docs.rs]
+# docs.rs renders `fs` too, or the type is documented nowhere a reader looks.
+all-features = true
 
 [dev-dependencies]
+# Sandbox directories for the `fs` tests, which need a real filesystem to
+# rename across. Not the same use as the optional dependency above.
+tempfile = "3.27"
 # Already in the tree under zip; the tests build archives by hand and need it
 # to stamp their own headers.
 crc32fast = "1.5"
