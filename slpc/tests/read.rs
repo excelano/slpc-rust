@@ -377,15 +377,31 @@ fn a_container_may_be_its_own_payload() {
 #[test]
 fn reports_the_payloads_uncompressed_size() {
     let payload = b"%PDF-1.7 not really\n";
-    let mut c = open(&container("report.pdf", payload)).unwrap();
+    let c = open(&container("report.pdf", payload)).unwrap();
     assert_eq!(c.payload_size().unwrap(), payload.len() as u64);
+}
+
+#[test]
+fn the_name_and_the_size_can_be_asked_for_together() {
+    // A shared borrow, so this composes in one expression. Anything reporting
+    // what is in a container asks both at once, and an accessor needing `&mut`
+    // makes that a borrow error on the first line a consumer writes.
+    let c = open(&container("report.pdf", b"1234")).unwrap();
+    assert_eq!(
+        format!(
+            "{} is {} bytes",
+            c.payload_name(),
+            c.payload_size().unwrap()
+        ),
+        "report.pdf is 4 bytes"
+    );
 }
 
 #[test]
 fn a_payload_of_zero_length_has_a_size_and_not_an_error() {
     // SPEC 2.3 permits a payload of any length, including zero, so this is a
     // number rather than a complaint.
-    let mut c = open(&container("empty.bin", b"")).unwrap();
+    let c = open(&container("empty.bin", b"")).unwrap();
     assert_eq!(c.payload_size().unwrap(), 0);
 }
 
@@ -404,7 +420,7 @@ fn the_size_is_the_uncompressed_one() {
     std::io::Write::write_all(&mut w, text.as_bytes()).unwrap();
     let bytes = w.finish().unwrap().into_inner();
 
-    let mut c = open(&bytes).unwrap();
+    let c = open(&bytes).unwrap();
     assert_eq!(c.payload_size().unwrap(), 4096);
     assert!(
         bytes.len() < 2048,
@@ -422,7 +438,7 @@ fn an_unrecognized_version_has_no_payload_to_size() {
         Member::new(METADATA_MEMBER, doc.as_bytes()),
         Member::new("report.pdf", b"x"),
     ]);
-    let mut c = open(&bytes).unwrap();
+    let c = open(&bytes).unwrap();
     assert!(matches!(
         c.payload_size(),
         Err(Error::Unsupported(Unsupported::Version(v))) if v == "9.4"

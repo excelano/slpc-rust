@@ -21,6 +21,11 @@ use crate::{central, metadata, name, METADATA_MEMBER, VERSION};
 pub(crate) struct Entry {
     raw: Vec<u8>,
     kind: EntryKind,
+    /// The member's uncompressed length, kept from the same pass that read the
+    /// name and the kind. It is eight bytes per member against a lookup that
+    /// would otherwise need the archive, and needing the archive is what would
+    /// make asking a member's size require `&mut`.
+    size: u64,
 }
 
 /// How many members of the central directory carry a given name.
@@ -119,6 +124,7 @@ impl<R: Read + Seek> Container<R> {
             entries.push(Entry {
                 raw: f.name_raw().to_owned(),
                 kind: EntryKind::from_mode(f.unix_mode()),
+                size: f.size(),
             });
         }
 
@@ -212,11 +218,23 @@ impl<R: Read + Seek> Container<R> {
     /// Fails the way [`Container::payload`] does for a container declaring a
     /// version this build does not implement, since in that case the payload
     /// was never located.
-    pub fn payload_size(&mut self) -> Result<u64> {
+    ///
+    /// Borrows shared rather than mutably, unlike [`Container::payload`], so it
+    /// composes with [`Container::payload_name`] in one expression — which is
+    /// how anything reporting what is in a container asks the question:
+    ///
+    /// ```no_run
+    /// # fn main() -> slpc::Result<()> {
+    /// let c = slpc::Container::open("report.pdf.slpc")?;
+    /// println!("{} is {} bytes", c.payload_name(), c.payload_size()?);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn payload_size(&self) -> Result<u64> {
         let i = self
             .payload_index
             .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
-        Ok(self.archive.by_index_raw(i)?.size())
+        Ok(self.entries[i].size)
     }
 
     /// The payload, as a stream.
@@ -260,6 +278,7 @@ pub fn metadata_of<R: Read + Seek>(mut reader: R) -> Result<DocumentMut> {
         entries.push(Entry {
             raw: f.name_raw().to_owned(),
             kind: EntryKind::from_mode(f.unix_mode()),
+            size: f.size(),
         });
     }
 

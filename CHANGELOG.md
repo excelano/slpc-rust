@@ -9,6 +9,24 @@ minor bump below 1.0 is how a breaking change ships.
 This file begins at 0.3.0. Earlier releases carried no notes, and the tags and
 the commit history are the record for those.
 
+## [0.3.2] - 2026-08-20
+
+### Changed
+
+- **`Container::payload_size` borrows shared rather than mutably.** In 0.3.1 it
+  reached into the archive at call time and so took `&mut self`, which meant the
+  question anything reporting a container's contents actually asks did not
+  compile:
+
+  ```rust
+  println!("{} is {} bytes", c.payload_name(), c.payload_size()?);
+  ```
+
+  The size now comes from the central directory entry read when the container
+  was opened, eight bytes per member against a lookup that needed the archive.
+  Tightening a `&mut self` receiver to `&self` breaks no caller, so 0.3.1 code
+  compiles unchanged.
+
 ## [0.3.1] - 2026-08-20
 
 ### Added

@@ -20,7 +20,8 @@ fn main() -> Result<(), slpc::Error> {
 ```
 
 The payload is a stream and is never read into memory; `payload_size` reports
-how long it is without decompressing any of it. Metadata is exposed as a
+how long it is without decompressing any of it, and borrows shared so the name
+and the size can be asked for in one expression. Metadata is exposed as a
 document that keeps comments, key order, and whitespace across a rewrite, and as
 the member's bytes for a caller who wants a different parser or a hash.
 
