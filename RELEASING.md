@@ -6,7 +6,7 @@ This repository publishes two crates and ships one binary, so it has both a libr
 
 ## The loop
 
-1. **Bump the version, in two adjacent places.** In the root `Cargo.toml`: `version` under `[workspace.package]`, which both crates inherit, and the `slpc` requirement under `[workspace.dependencies]`, which is what the published `slipcase` asks crates.io for. They live next to each other because a version requirement cannot inherit `workspace.package.version`, so the number is written twice and the only defence is that both are on screen at once. Getting the second wrong is quiet: a caret requirement on the old number still resolves, and the published binary depends on a library release older than the one it shipped with. Update `Cargo.lock` with a build, run `cargo test`, and turn the `[Unreleased]` heading in `CHANGELOG.md` into `## [0.1.0] - <today>` — cargo-dist looks the version up in that file for the release body, and finding no section for it publishes notes that say nothing. Commit.
+1. **Bump the version, in two adjacent places.** In the root `Cargo.toml`: `version` under `[workspace.package]`, which both crates inherit, and the `slpc` requirement under `[workspace.dependencies]`, which is what the published `slipcase` asks crates.io for. They live next to each other because a version requirement cannot inherit `workspace.package.version`, so the number is written twice and the only defence is that both are on screen at once. Getting the second wrong is quiet: a caret requirement on the old number still resolves, and the published binary depends on a library release older than the one it shipped with. Update `Cargo.lock` with a build, run `cargo test --workspace --all-features`, and turn the `[Unreleased]` heading in `CHANGELOG.md` into `## [0.1.0] - <today>` — cargo-dist looks the version up in that file for the release body, and finding no section for it publishes notes that say nothing. Commit.
 
 2. **Run the conformance corpus.** It is not part of `cargo test` and will not run itself:
 
@@ -18,7 +18,28 @@ This repository publishes two crates and ships one binary, so it has both a libr
 
    Against the corpus as it currently is, not a pinned copy: it is the arbiter between implementations and it changes when the specification is clarified, which is the event this step exists to notice. A disagreement is not automatically a bug here — the corpus is not normative and the specification wins over both — but it stops the release until someone has decided which side is wrong. The runner refuses to report success on a corpus it could not find or whose cases were never generated, so a pass means it ran.
 
-3. **Check what consumers will see.** `cargo package -p slpc --list` and `cargo publish -p slpc --dry-run` package the library and compile it from the packaged copy, which catches a file `.gitignore` excluded but the build needed. `cargo doc --no-deps --open` is worth a look, since a library's documentation is its interface.
+3. **Check what consumers will see.** `cargo package -p slpc --list` and `cargo publish -p slpc --dry-run` package the library and compile it from the packaged copy, which catches a file `.gitignore` excluded but the build needed. `cargo doc --no-deps --all-features --open` is worth a look, since a library's documentation is its interface, and `--all-features` is not optional there: an item behind an off-by-default feature is invisible without it, and docs.rs renders with it on.
+
+   **That dry run compiles the packaged copy with default features only**, so nothing behind a feature is checked by it. Build the packaged tree directly to cover the rest:
+
+   ```sh
+   cargo test --manifest-path <target-dir>/package/slpc-0.1.0/Cargo.toml --all-features
+   ```
+
+   **Then use the library the way a consumer would**, in a throwaway crate with a path dependency on `slpc`, before the version is spent:
+
+   ```sh
+   cargo new /tmp/consumer && cd /tmp/consumer
+   cargo add slpc --path ~/slipcase/slpc-rust/slpc --features fs
+   ```
+
+   Write the few lines a caller would actually write — open a container, report what is in it, write one to a path — and compile them. This is not the same check as reading the signatures, and the difference is not theoretical: 0.3.1 shipped `Container::payload_size` taking `&mut self`, so the one line every consumer writes first,
+
+   ```rust
+   println!("{} is {} bytes", c.payload_name(), c.payload_size()?);
+   ```
+
+   did not compile. Nothing in the diff looked wrong. Using it took ten seconds and cost a second release for want of doing it ten minutes earlier.
 
    `cargo publish -p slipcase --dry-run` **cannot run before the library is published**: it resolves `slpc` from crates.io and fails with `no matching package named slpc found` until a version is there. That is not a fault to fix. It is the ordering constraint the release depends on, arriving early.
 
@@ -46,7 +67,19 @@ This repository publishes two crates and ships one binary, so it has both a libr
    gh release view v0.1.0
    ```
 
-8. **Add the .debs to the Excelano apt repository**, per the fleet's `add-deb.sh` and `rebuild.sh` loop. Dry-run the rsync first.
+8. **Ship the .debs to the Excelano apt repository.** One command, which takes the *repository* name rather than the binary's:
+
+   ```sh
+   apt-ship slpc-rust v0.1.0
+   ```
+
+   It downloads every `.deb` on the release, adds each to the pool, prunes to the two-version retention policy, regenerates and re-signs the indices, checks that no index entry names a file the pool lacks, previews the rsync, refuses to deploy if that preview would delete anything the prune did not itself remove, pushes, and verifies against the live index on both architectures.
+
+   **Do not run `apt-ship -n` first.** The instinct is right and the tool is not: its dry run prunes the pool for real and then exits, so the deploy that follows finds nothing left to prune, and the deletions the dry run already made locally read to the guard as deletions nobody asked for. It aborts, and the abort says something changed the source tree when nothing did. Filed as `anderix/bin#4`. Until that is fixed, run `apt-ship` once, with `-y` if unattended; the preview and the guard are inside it, which is what makes a separate dry run unnecessary as well as harmful.
+
+   **This is the step a release loses.** Nothing downstream depends on apt, so a session that ends here leaves a release that looks finished everywhere else while apt keeps serving the previous version. `fleet -r` is what catches it: an `APT` column reading `behind`, and the `apt-ship` line to fix it. Run it afterwards to confirm the row for this repository reads `ok` across tag, release, CI, and apt.
+
+   Nothing to commit in the apt repository for an ordinary release: `dists/` and `pool/` are gitignored build artifacts, which is also why `git status` there cannot tell you the step was skipped.
 
 ## What is not automated, and why
 
