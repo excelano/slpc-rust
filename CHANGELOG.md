@@ -22,6 +22,9 @@ the commit history are the record for those.
   acquire a temporary-file dependency and the library's default tree stays at
   fifteen crates.
 
+  `slipcase` now writes through it rather than through its own copy. No change
+  to what the tool does: same permissions, same atomicity, same messages.
+
 
 ## [0.3.0] - 2026-08-20
 

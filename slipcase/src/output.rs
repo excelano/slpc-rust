@@ -1,44 +1,33 @@
-// Writing files that appear only once they are complete.
+// Where a verb writes: a file, through the library, or standard output.
+//
+// The file half is `slpc::Destination`, which is where the temporary file, the
+// permissions, and the rename live. What stays here is what is shaped like a
+// command-line tool rather than like a container: `-` for standard output,
+// refusing to write a ZIP at a terminal, and the wording of the messages,
+// which mention flags the library has never heard of.
 //
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
 
-use std::fs::{File, Permissions};
+use std::fs::File;
 use std::io::{IsTerminal, Seek, Write};
-use std::path::{Path, PathBuf};
-
-use tempfile::NamedTempFile;
+use std::path::Path;
 
 use crate::fail::{Context, Failure, Result};
 
 /// Somewhere a verb writes: a file that becomes visible under its real name
 /// only when it is finished, or standard output.
 ///
-/// Everything is written to a temporary file first and put where it belongs at
-/// the end. A pack that runs out of disk halfway therefore leaves nothing behind
-/// rather than a truncated container that looks like one, `--force` over an
-/// existing file cannot destroy the old one and then fail to produce the new,
-/// and a repack that replaces a container with itself cannot leave the only copy
-/// half written. Standard output goes through a temporary file too, so a
-/// pipeline never receives the first half of a container that then failed — and
-/// because repacking writes to a stream it can seek in, which is what stops the
-/// members it copies through from claiming a length nothing supplies.
+/// Standard output goes through a temporary file too, so a pipeline never
+/// receives the first half of a container that then failed — and because
+/// repacking writes to a stream it can seek in, which is what stops the members
+/// it copies through from claiming a length nothing supplies.
 pub struct Destination {
     to: To,
 }
 
 enum To {
-    File {
-        tmp: NamedTempFile,
-        path: PathBuf,
-        force: bool,
-        /// What the finished file should be readable by. A temporary file is
-        /// created private to its owner, which is right while it is a temporary
-        /// file and wrong the moment it is renamed into place, so this is put
-        /// on before the rename. It comes from the file being replaced where
-        /// there is one, and from [`new_file_mode`] where there is not.
-        mode: Permissions,
-    },
+    File(slpc::Destination),
     /// Spooled, then copied out at the end. Unlinked as soon as it is created,
     /// so it leaves nothing behind however this process ends.
     Stdout(File),
@@ -47,37 +36,12 @@ enum To {
 impl Destination {
     /// Reserve a destination, refusing to overwrite unless told to.
     ///
-    /// The existence check here is for the message; the guarantee is the
-    /// no-clobber rename in [`Destination::commit`], which is atomic and cannot
-    /// be raced. Checking twice costs a `stat` and buys a sentence that names
-    /// the file and the flag.
+    /// The two checks before the library is asked are for the message. The
+    /// guarantee is the library's no-clobber rename, which is atomic and cannot
+    /// be raced; these buy a sentence that names the file and the flag.
     pub fn new(path: &Path, force: bool) -> Result<Self> {
-        Self::at(path, force, None)
-    }
-
-    /// Reserve a file to be written back over itself.
-    ///
-    /// The path is resolved first, so a container reached through a symbolic
-    /// link is replaced rather than the link being replaced by a file, and the
-    /// container's own permissions are what the replacement gets rather than
-    /// the ones a new file would. What a rename cannot carry across is
-    /// ownership, which is the standing cost of replacing a file rather than
-    /// writing into it, and it is shared with every editor that writes this way.
-    pub fn in_place(path: &Path) -> Result<Self> {
-        let real =
-            std::fs::canonicalize(path).context(format!("cannot read {}", path.display()))?;
-        let mode = std::fs::metadata(&real)
-            .context(format!("cannot read {}", real.display()))?
-            .permissions();
-        Self::at(&real, true, Some(mode))
-    }
-
-    fn at(path: &Path, force: bool, mode: Option<Permissions>) -> Result<Self> {
         if !force && path.exists() {
-            return Err(Failure::new(format!(
-                "{} exists. Pass --force to overwrite it.",
-                path.display()
-            )));
+            return Err(exists(path));
         }
         let dir = path
             .parent()
@@ -89,19 +53,15 @@ impl Destination {
                 dir.display()
             )));
         }
-        let tmp =
-            NamedTempFile::new_in(dir).context(format!("cannot write into {}", dir.display()))?;
-        let mode = match mode {
-            Some(m) => m,
-            None => new_file_mode(tmp.path())?,
-        };
         Ok(Self {
-            to: To::File {
-                tmp,
-                path: path.to_owned(),
-                force,
-                mode,
-            },
+            to: To::File(slpc::Destination::new(path, force)?),
+        })
+    }
+
+    /// Reserve a file to be written back over itself.
+    pub fn in_place(path: &Path) -> Result<Self> {
+        Ok(Self {
+            to: To::File(slpc::Destination::in_place(path)?),
         })
     }
 
@@ -129,7 +89,7 @@ impl Destination {
     /// is writing.
     pub fn writer(&mut self) -> &mut File {
         match &mut self.to {
-            To::File { tmp, .. } => tmp.as_file_mut(),
+            To::File(d) => d.writer(),
             To::Stdout(spool) => spool,
         }
     }
@@ -137,85 +97,52 @@ impl Destination {
     /// What has been written so far, rewound, for a caller that wants to read
     /// back its own output before anything is replaced by it.
     pub fn written(&mut self) -> Result<&mut File> {
-        let f = self.writer();
-        f.flush().context("cannot finish writing")?;
-        f.rewind().context("cannot re-read what was written")?;
-        Ok(f)
+        match &mut self.to {
+            To::File(d) => Ok(d.written()?),
+            To::Stdout(spool) => {
+                spool.flush().context("cannot finish writing")?;
+                spool.rewind().context("cannot re-read what was written")?;
+                Ok(spool)
+            }
+        }
     }
 
     /// Put the finished file where it belongs.
     pub fn commit(self) -> Result<()> {
-        let (tmp, path, force, mode) = match self.to {
+        match self.to {
+            To::File(d) => d.commit().map_err(placement),
             To::Stdout(mut spool) => {
                 spool.rewind().context("cannot rewind the spooled output")?;
                 let mut out = std::io::stdout().lock();
                 std::io::copy(&mut spool, &mut out)
                     .and_then(|_| out.flush())
-                    .context("cannot write to standard output")?;
-                return Ok(());
+                    .context("cannot write to standard output")
             }
-            To::File {
-                tmp,
-                path,
-                force,
-                mode,
-            } => (tmp, path, force, mode),
-        };
-
-        tmp.as_file()
-            .set_permissions(mode)
-            .context(format!("cannot set the permissions of {}", path.display()))?;
-
-        let outcome = if force {
-            tmp.persist(&path).map_err(|e| e.error)
-        } else {
-            tmp.persist_noclobber(&path).map_err(|e| e.error)
-        };
-        match outcome {
-            Ok(_) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(Failure::new(format!(
-                "{} exists. Pass --force to overwrite it.",
-                path.display()
-            ))),
-            Err(e) => Err(Failure::new(format!(
-                "cannot write {}: {e}",
-                path.display()
-            ))),
         }
     }
 }
 
-/// The permissions a file created the ordinary way beside `near` would have.
+/// The refusal to overwrite, in this tool's vocabulary.
 ///
-/// Measured rather than asked for. What a new file gets is 0666 with the
-/// process umask taken out of it, and there is no way to read the umask without
-/// setting it, which needs a C call and the `unsafe` this crate forbids. So a
-/// file is created the ordinary way, asked what it got, and removed. It costs
-/// three system calls once per run, and it is the difference between `slipcase
-/// pack` handing back a container the umask decided who can read and one only
-/// its author can.
+/// The library reports `AlreadyExists` and says nothing about flags, because it
+/// has no flags. Naming `--force` is this tool's job.
+fn exists(path: &Path) -> Failure {
+    Failure::new(format!(
+        "{} exists. Pass --force to overwrite it.",
+        path.display()
+    ))
+}
+
+/// A library failure from putting a file somewhere.
 ///
-/// The probe sits beside the temporary file and borrows its name, which is
-/// already unique to this process, so nothing else can be creating it.
-fn new_file_mode(near: &Path) -> Result<Permissions> {
-    let mut name = near.as_os_str().to_owned();
-    name.push(".mode");
-    let probe = PathBuf::from(name);
-
-    let f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)
-        .context(format!("cannot create {}", probe.display()))?;
-    let mode = f
-        .metadata()
-        .context(format!(
-            "cannot read the permissions of {}",
-            probe.display()
-        ))
-        .map(|m| m.permissions());
-    drop(f);
-
-    std::fs::remove_file(&probe).context(format!("cannot remove {}", probe.display()))?;
-    mode
+/// The one case worth recognizing is a destination that appeared between being
+/// reserved and being committed, which is the same refusal as the check up
+/// front and deserves the same sentence.
+fn placement(e: slpc::Error) -> Failure {
+    match &e {
+        slpc::Error::Io(io) if io.kind() == std::io::ErrorKind::AlreadyExists => {
+            Failure::new(format!("{io}. Pass --force to overwrite it."))
+        }
+        _ => e.into(),
+    }
 }

@@ -19,7 +19,9 @@ path = "src/main.rs"
 [dependencies]
 # Path and version both, declared at the workspace root beside the version
 # number it has to match. See the comment there.
-slpc.workspace = true
+# `fs` is the library's file-placement half: writing a container to a path,
+# atomically, with the permissions a file there should have. See output.rs.
+slpc = { workspace = true, features = ["fs"] }
 clap = { version = "4.6", features = ["derive"] }
 # For spooling standard input, which a ZIP reader cannot take from a pipe. The
 # tree it brings is pure Rust: libc and linux-raw-sys are declarations, not a C
