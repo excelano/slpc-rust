@@ -9,6 +9,31 @@ minor bump below 1.0 is how a breaking change ships.
 This file begins at 0.3.0. Earlier releases carried no notes, and the tags and
 the commit history are the record for those.
 
+## [0.3.3] - 2026-08-21
+
+### Added
+
+- **`Container::check_payload_readable`**, which says whether this build can
+  decode the payload before anything is extracted. `Container` could already
+  state the payload's name and size without touching its bytes, and nothing
+  said whether those bytes were reachable: a caller found out by attempting the
+  extraction. That is the wrong shape for anything that commits to an operation
+  before performing it, such as a window putting an Open button on a payload
+  card.
+
+  It refuses with the same three `Unsupported` variants `Container::payload`
+  does, in the order that function meets them, so the two never name different
+  reasons for one refusal. Both facts come from the central directory entry
+  read when the container was opened, so it borrows shared, decompresses
+  nothing, and reads nothing further.
+
+  `Ok` says the decoder exists rather than that extraction will succeed:
+  truncated data, a failed checksum, and an i/o error are still ahead. And it
+  is a capability query rather than a verdict — SPEC 2.5 puts compression and
+  encryption outside the conformance question, so a container whose payload is
+  encrypted is conformant and its payload is out of reach, and `validate` goes
+  on saying the first of those.
+
 ## [0.3.2] - 2026-08-20
 
 ### Changed

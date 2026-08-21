@@ -78,6 +78,7 @@ c.metadata();         // &DocumentMut — the whole TOML document, unknown keys 
 c.metadata_mut();     // &mut DocumentMut — changed in place
 c.metadata_bytes();   // &[u8] — the metadata member as stored, byte for byte
 c.payload_size()?;    // u64 — uncompressed, read off the central directory
+c.check_payload_readable()?;  // -> Result<(), Unsupported> — can this build decode it
 let mut r = c.payload()?;   // impl Read — streams, never buffered whole
 
 slpc::metadata_of(reader)?;   // -> DocumentMut — the document, no verdict attached
@@ -183,6 +184,22 @@ Everything in §4.1 writes into a stream the caller supplies, which is the right
 It exists because `Container::read` cannot say two things at once. A container whose `payload.file` names no member, names several, or names something SPEC §2.3 forbids has a metadata document that parsed cleanly, and the read path returns an error over the payload before a caller can reach it. So does one missing a required key. A program showing a person what is in a file wants to show them that document alongside the reason the container is not conformant, and had no way to get it.
 
 **It is not a verdict and must not become one.** A document coming back says nothing about conformance; `validate` remains the only function here that answers the question SPEC §3 constrains, and the separation is what keeps a caller from reading "the metadata parsed" as "the container is fine". `slipcase info` gains from the same function: it refused a container whose metadata it could read perfectly well.
+
+### 4.9 Whether the payload can be read
+
+`check_payload_readable` answers, before anything is extracted, whether this build can decode the payload member. It refuses with the same three `Unsupported` variants `payload` does — an unrecognized version, an encrypted member, a compression method this build lacks — and it meets them in the order the ZIP crate does, so a member that is both encrypted and compressed by a method this build lacks is reported encrypted.
+
+It exists because a program has to commit to an operation before performing it. A window putting an Open button on a payload card, or a plan stating what it is about to do, had no way to learn the answer except by attempting the extraction and reading it off the failure.
+
+**It borrows shared and reads nothing.** Both facts are already in the central directory entry collected when the container was opened, which is where §4.1's `payload_size` gets its answer for the same reason. The probe it replaces — construct a payload reader and drop it — needed `&mut`, and it seeks and reads a local header on the way, so it could also fail for reasons that are not about capability at all.
+
+**The library answers rather than the caller.** Exposing the compression method and the encryption flag would ask a caller to judge a method against a build, which it cannot do: cargo unifies features across the whole dependency graph, so another crate depending on `zip` with `zstd` widens what this library can decode without anything here changing. Which methods a build carries is a fact only that build holds.
+
+**`Ok` is not a promise that extraction succeeds.** It says the decoder exists. Truncated data, a failed checksum, and an i/o error are still ahead, and `payload` reports them when they arrive.
+
+**It is not a verdict and must not become one.** SPEC §2.5 puts compression and encryption outside the conformance question, so `validate` reports an encrypted payload conformant and this says the bytes are out of reach. Folding capability into conformance would make the verdict depend on which features the build was compiled with, which is the thing §4.5 keeps `Unsupported` separate from `Malformed` to prevent.
+
+The risk it carries is drift: the two conditions are mirrored from inside the ZIP crate, and a version of it that added a third would have the check say yes where extraction says no. A test asserts the two answers agree across every fixture that reaches one, which is the pairing §6's corpus runner makes between verdict and exit code, applied to a smaller question.
 
 ---
 

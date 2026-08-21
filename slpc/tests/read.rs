@@ -445,6 +445,167 @@ fn an_unrecognized_version_has_no_payload_to_size() {
     ));
 }
 
+// --- whether the payload can be read ---------------------------------------
+
+/// A container whose members are deflated, built by an ordinary writer.
+fn deflated_container() -> Vec<u8> {
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    w.start_file(METADATA_MEMBER, opts).unwrap();
+    std::io::Write::write_all(&mut w, metadata("a.txt").as_bytes()).unwrap();
+    w.start_file("a.txt", opts).unwrap();
+    std::io::Write::write_all(&mut w, "a".repeat(4096).as_bytes()).unwrap();
+    w.finish().unwrap().into_inner()
+}
+
+#[test]
+fn a_payload_this_build_can_decode_is_readable() {
+    let c = open(&container("report.pdf", b"%PDF-1.7 not really\n")).unwrap();
+    assert!(c.check_payload_readable().is_ok());
+    let c = open(&deflated_container()).unwrap();
+    assert!(c.check_payload_readable().is_ok());
+}
+
+#[test]
+fn the_name_and_the_check_can_be_asked_for_together() {
+    // A shared borrow, like payload_name and payload_size. Anything describing
+    // a payload before offering to open it asks all three at once, and `&mut`
+    // on any of them makes that a borrow error rather than a line of code.
+    let c = open(&container("report.pdf", b"1234")).unwrap();
+    let line = match c.check_payload_readable() {
+        Ok(()) => format!(
+            "open {} ({} bytes)",
+            c.payload_name(),
+            c.payload_size().unwrap()
+        ),
+        Err(why) => format!("{} cannot be opened: {why}", c.payload_name()),
+    };
+    assert_eq!(line, "open report.pdf (4 bytes)");
+}
+
+#[test]
+fn an_encrypted_payload_is_not_readable_and_the_container_still_conforms() {
+    // SPEC 2.5 puts encryption outside the conformance question, so these two
+    // answers are meant to differ. Folding one into the other would have this
+    // build call a conformant container broken.
+    let bytes = raw_zip(&[
+        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new("a.txt", b"ciphertext").encrypted(),
+    ]);
+    assert!(slpc::validate(std::io::Cursor::new(bytes.clone()))
+        .unwrap()
+        .is_conformant());
+    let c = open(&bytes).unwrap();
+    assert!(matches!(
+        c.check_payload_readable(),
+        Err(Unsupported::Encrypted)
+    ));
+}
+
+#[test]
+fn a_payload_compressed_beyond_this_build_is_not_readable() {
+    // Method 12 is bzip2, which the C-free feature set leaves out.
+    let bytes = raw_zip(&[
+        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new("a.txt", b"pretend this is bzip2").claims_method(12),
+    ]);
+    let c = open(&bytes).unwrap();
+    assert!(matches!(
+        c.check_payload_readable(),
+        Err(Unsupported::Compression(12))
+    ));
+}
+
+#[test]
+fn an_unrecognised_version_has_no_payload_to_check() {
+    // The payload was never located, because SPEC 3 forbids applying this
+    // version's rules to a container declaring another. Same answer as asking
+    // for the payload itself, and as asking for its size.
+    let doc = "slipcase_version = \"9.4\"\n\n[payload]\nfile = \"a.txt\"\n";
+    let bytes = raw_zip(&[
+        Member::new(METADATA_MEMBER, doc.as_bytes()),
+        Member::new("a.txt", b"x"),
+    ]);
+    let c = open(&bytes).unwrap();
+    assert!(matches!(
+        c.check_payload_readable(),
+        Err(Unsupported::Version(v)) if v == "9.4"
+    ));
+}
+
+#[test]
+fn a_payload_that_is_both_encrypted_and_unreadable_reports_the_encryption() {
+    // A member can be encrypted and carry a method this build lacks at once,
+    // which is what every AES member is. The archive is asked about encryption
+    // first, and this has to meet them in the same order or the two answers
+    // name different reasons for one refusal. The fixture claims method 12
+    // rather than AES's 99, because a well-formed AES member also carries an
+    // extra field this suite does not stamp and the ZIP crate refuses the
+    // header without it.
+    let bytes = raw_zip(&[
+        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new("a.txt", b"ciphertext")
+            .encrypted()
+            .claims_method(12),
+    ]);
+    let mut c = open(&bytes).unwrap();
+    assert!(matches!(
+        c.check_payload_readable(),
+        Err(Unsupported::Encrypted)
+    ));
+    assert!(matches!(
+        c.payload(),
+        Err(Error::Unsupported(Unsupported::Encrypted))
+    ));
+}
+
+#[test]
+fn the_check_agrees_with_what_extraction_does() {
+    // The check mirrors two tests the ZIP crate makes inside `payload`, and a
+    // later version of that crate could add a third. This is what notices. The
+    // direction that matters is a check saying yes where extraction says no,
+    // since that is the answer a caller acts on.
+    let unrecognised = "slipcase_version = \"9.4\"\n\n[payload]\nfile = \"a.txt\"\n";
+    let fixtures: Vec<(&str, Vec<u8>)> = vec![
+        ("a stored payload", container("a.txt", b"plain\n")),
+        ("a payload of zero length", container("empty.bin", b"")),
+        ("a deflated payload", deflated_container()),
+        (
+            "an encrypted payload",
+            raw_zip(&[
+                Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+                Member::new("a.txt", b"ciphertext").encrypted(),
+            ]),
+        ),
+        (
+            "a payload compressed by method 12",
+            raw_zip(&[
+                Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+                Member::new("a.txt", b"pretend this is bzip2").claims_method(12),
+            ]),
+        ),
+        (
+            "a container declaring another version",
+            raw_zip(&[
+                Member::new(METADATA_MEMBER, unrecognised.as_bytes()),
+                Member::new("a.txt", b"x"),
+            ]),
+        ),
+    ];
+
+    for (what, bytes) in fixtures {
+        let mut c = open(&bytes).unwrap();
+        // Both sides say the same sentence for the same refusal: `Error`
+        // delegates its Display to the `Unsupported` it carries. Anything else
+        // coming back from `payload` — an i/o error, say — reads as a
+        // disagreement here, which is what it would be.
+        let checked = c.check_payload_readable().err().map(|u| u.to_string());
+        let extracted = c.payload().err().map(|e| e.to_string());
+        assert_eq!(checked, extracted, "the two disagree about {what}");
+    }
+}
+
 // --- the metadata of a container that will not open ------------------------
 
 fn metadata_of(bytes: &[u8]) -> slpc::Result<slpc::toml_edit::DocumentMut> {

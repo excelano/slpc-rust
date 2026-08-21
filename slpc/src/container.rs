@@ -26,6 +26,50 @@ pub(crate) struct Entry {
     /// would otherwise need the archive, and needing the archive is what would
     /// make asking a member's size require `&mut`.
     size: u64,
+    /// Whether general purpose bit 0 is set on the member.
+    encrypted: bool,
+    /// The compression method's number, when it is one this build carries no
+    /// decoder for, and `None` for every method it can decode. Kept for the
+    /// same reason as `size`: the answer is in the central directory, and going
+    /// back to the archive for it is what would need `&mut`.
+    unsupported_method: Option<u16>,
+}
+
+/// Collect what the central directory says about every member, in one pass.
+///
+/// `by_index_raw` rather than `by_index`: the latter refuses a member whose
+/// compression method this build was not given, which is exactly the member
+/// that has to survive being listed and copied. Nothing here decompresses
+/// anything.
+fn entries_of<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<Vec<Entry>> {
+    let mut entries = Vec::with_capacity(archive.len());
+    for i in 0..archive.len() {
+        let f = archive.by_index_raw(i)?;
+        entries.push(Entry {
+            raw: f.name_raw().to_owned(),
+            kind: EntryKind::from_mode(f.unix_mode()),
+            size: f.size(),
+            encrypted: f.encrypted(),
+            unsupported_method: unsupported_method(f.compression()),
+        });
+    }
+    Ok(entries)
+}
+
+/// The method's number, when it is one this build carries no decoder for.
+///
+/// The ZIP crate gates each `CompressionMethod` variant behind one of its own
+/// features, so a method the build was not given arrives as `Unsupported`
+/// carrying the number the archive stated. That is the test the crate itself
+/// makes before it builds a decoder, which is what keeps
+/// [`Container::check_payload_readable`] from answering differently from
+/// extraction.
+#[allow(deprecated)]
+fn unsupported_method(method: zip::CompressionMethod) -> Option<u16> {
+    match method {
+        zip::CompressionMethod::Unsupported(id) => Some(id),
+        _ => None,
+    }
 }
 
 /// How many members of the central directory carry a given name.
@@ -114,19 +158,7 @@ impl<R: Read + Seek> Container<R> {
 
         let mut archive = ZipArchive::new(reader)?;
 
-        // `by_index_raw` rather than `by_index`: the latter refuses a member
-        // whose compression method this build was not given, which is exactly
-        // the member that has to survive being listed and copied. Nothing here
-        // decompresses anything.
-        let mut entries = Vec::with_capacity(archive.len());
-        for i in 0..archive.len() {
-            let f = archive.by_index_raw(i)?;
-            entries.push(Entry {
-                raw: f.name_raw().to_owned(),
-                kind: EntryKind::from_mode(f.unix_mode()),
-                size: f.size(),
-            });
-        }
+        let entries = entries_of(&mut archive)?;
 
         let meta_index = match locate(&entries, &names, METADATA_MEMBER) {
             Located::One(i) => i,
@@ -237,6 +269,55 @@ impl<R: Read + Seek> Container<R> {
         Ok(self.entries[i].size)
     }
 
+    /// Whether this build can decode the payload, and what stops it when it
+    /// cannot.
+    ///
+    /// Read off the central directory entry collected when the container was
+    /// opened, so this decompresses nothing, reads nothing further, and
+    /// borrows shared. It is for a program that has to commit to extraction
+    /// before performing it: a button offering to open the payload, a menu
+    /// item, a plan stating what it is about to do. The alternative is to
+    /// attempt the extraction and read the answer off the failure.
+    ///
+    /// The three refusals are [`Container::payload`]'s own, in the order it
+    /// meets them. A container declaring a version this build does not
+    /// implement never had its payload located, so that answer comes first. An
+    /// encrypted member is next, because a member can be encrypted and
+    /// compressed at once and the archive is asked about encryption first. A
+    /// compression method this build carries no decoder for is last.
+    ///
+    /// None of the three makes the container non-conformant. SPEC 2.5 puts
+    /// compression and encryption outside the conformance question, so this is
+    /// a capability query and not a verdict: [`validate`](crate::validate)
+    /// answers that one, and it reports such a container conformant.
+    ///
+    /// **`Ok` is not a promise that extraction will succeed.** It says this
+    /// build knows how to decode the member. The bytes can still be truncated,
+    /// fail their checksum, or fail to read, and [`Container::payload`] and the
+    /// stream it returns report that if it happens.
+    ///
+    /// ```no_run
+    /// # fn main() -> slpc::Result<()> {
+    /// let c = slpc::Container::open("report.pdf.slpc")?;
+    /// if let Err(why) = c.check_payload_readable() {
+    ///     println!("{} cannot be opened here: {why}", c.payload_name());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn check_payload_readable(&self) -> std::result::Result<(), Unsupported> {
+        let i = self
+            .payload_index
+            .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
+        if self.entries[i].encrypted {
+            return Err(Unsupported::Encrypted);
+        }
+        if let Some(m) = self.entries[i].unsupported_method {
+            return Err(Unsupported::Compression(m));
+        }
+        Ok(())
+    }
+
     /// The payload, as a stream.
     ///
     /// Never buffered whole. A payload is a file of arbitrary size, and a
@@ -272,15 +353,7 @@ pub fn metadata_of<R: Read + Seek>(mut reader: R) -> Result<DocumentMut> {
     reader.rewind()?;
 
     let mut archive = ZipArchive::new(reader)?;
-    let mut entries = Vec::with_capacity(archive.len());
-    for i in 0..archive.len() {
-        let f = archive.by_index_raw(i)?;
-        entries.push(Entry {
-            raw: f.name_raw().to_owned(),
-            kind: EntryKind::from_mode(f.unix_mode()),
-            size: f.size(),
-        });
-    }
+    let entries = entries_of(&mut archive)?;
 
     let i = match locate(&entries, &names, METADATA_MEMBER) {
         Located::One(i) => i,
