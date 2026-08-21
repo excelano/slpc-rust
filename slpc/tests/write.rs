@@ -539,6 +539,83 @@ fn repacking_keeps_the_comments_and_the_keys_it_does_not_know() {
 }
 
 #[test]
+fn repointing_payload_file_keeps_the_comment_beside_it() {
+    // The key the library edits itself is the one key SPEC 3's guarantee is
+    // easiest to lose: everything else survives because nothing touches it.
+    let src = raw_zip(&[
+        Member::new(
+            METADATA_MEMBER,
+            b"slipcase_version = \"1.0\"\n\n[payload]\nfile = \"a.txt\"  # SPEC 2.2\n",
+        ),
+        Member::new("a.txt", b"payload\n"),
+    ]);
+
+    let mut out = Seekable::default();
+    slpc::Repack::new(std::io::Cursor::new(src))
+        .payload("b.txt", pipe(b"revised\n"))
+        .write(&mut out)
+        .unwrap();
+
+    let c = open(out.bytes()).unwrap();
+    assert_eq!(c.payload_name(), "b.txt");
+    assert_eq!(
+        String::from_utf8(c.metadata_bytes().to_vec()).unwrap(),
+        "slipcase_version = \"1.0\"\n\n[payload]\nfile = \"b.txt\"  # SPEC 2.2\n"
+    );
+}
+
+#[test]
+fn repointing_payload_file_keeps_the_whitespace_of_a_multiline_inline_table() {
+    // A value written inside a multi-line inline table carries the space before
+    // its trailing comma as decor. Replacing the value rather than the item is
+    // what keeps the table looking the way it was written.
+    let written = "slipcase_version = \"1.0\"\npayload = {\n    file = \"a.txt\" ,\n}\n";
+    let src = raw_zip(&[
+        Member::new(METADATA_MEMBER, written.as_bytes()),
+        Member::new("a.txt", b"payload\n"),
+    ]);
+
+    let mut out = Seekable::default();
+    slpc::Repack::new(std::io::Cursor::new(src))
+        .payload("b.txt", pipe(b"revised\n"))
+        .write(&mut out)
+        .unwrap();
+
+    let c = open(out.bytes()).unwrap();
+    assert_eq!(
+        String::from_utf8(c.metadata_bytes().to_vec()).unwrap(),
+        written.replace("a.txt", "b.txt")
+    );
+}
+
+#[test]
+fn repacking_under_the_name_the_document_already_carries_rewrites_nothing() {
+    // Handing over a document and replacing the payload under the name it
+    // already had are two things a caller does in one write. The name did not
+    // change, so `payload.file` should not be written at all.
+    let written = "slipcase_version = \"1.0\"\n\n[payload]\nfile = \"a.txt\"  # SPEC 2.2\n";
+    let src = raw_zip(&[
+        Member::new(METADATA_MEMBER, written.as_bytes()),
+        Member::new("a.txt", b"payload\n"),
+    ]);
+    let given = doc(written);
+
+    let mut out = Seekable::default();
+    slpc::Repack::new(std::io::Cursor::new(src))
+        .metadata(&given)
+        .payload("a.txt", pipe(b"revised\n"))
+        .write(&mut out)
+        .unwrap();
+
+    let mut c = open(out.bytes()).unwrap();
+    assert_eq!(payload_of(&mut c), b"revised\n");
+    assert_eq!(
+        String::from_utf8(c.metadata_bytes().to_vec()).unwrap(),
+        written
+    );
+}
+
+#[test]
 fn repacking_refuses_a_name_another_member_already_carries() {
     let src = source_with_extras();
     let e = slpc::Repack::new(std::io::Cursor::new(src))

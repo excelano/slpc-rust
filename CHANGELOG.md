@@ -9,6 +9,30 @@ minor bump below 1.0 is how a breaking change ships.
 This file begins at 0.3.0. Earlier releases carried no notes, and the tags and
 the commit history are the record for those.
 
+## [0.3.4] - 2026-08-21
+
+### Fixed
+
+- **Repointing `payload.file` no longer discards the comment and the whitespace
+  around it, and no longer runs when the value has not changed.** `Repack`
+  documents that a document handed to it is serialized without losing comments,
+  key order, or whitespace, and that held for every key except the one the
+  library edits itself. Setting the key dropped a fresh item over the old one,
+  which takes the decor `toml_edit` keeps beside a value with it, so replacing a
+  payload under a new name silently deleted whatever a person had written after
+  `file = "..."`, and a container whose metadata is a multi-line inline table
+  came back with the spacing before its trailing comma changed.
+
+  Two callers reached it. A rename lost the comment because the value genuinely
+  changed. Handing over the document and replacing the payload under the name it
+  already had lost the comment for nothing, because the key was assigned the
+  string it already held rather than left alone.
+
+  The key is now set inside the existing value with its decor restored, and a
+  key already holding the string being written is not touched at all. Packing is
+  unaffected: it only ever sets a key that is absent, where there is no decor to
+  carry over. Wrong since 0.3.0, where `Repack` shipped.
+
 ## [0.3.3] - 2026-08-21
 
 ### Added

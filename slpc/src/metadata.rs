@@ -4,7 +4,7 @@
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
 
-use toml_edit::{value, DocumentMut, Item, Table};
+use toml_edit::{value, DocumentMut, Item, Table, Value};
 
 use crate::error::{Malformed, Result};
 use crate::{PAYLOAD_FILE_KEY, VERSION_KEY};
@@ -71,6 +71,12 @@ pub(crate) fn required_string<'d>(doc: &'d DocumentMut, key: &'static str) -> Re
 /// The error names `payload` because that is the only intermediate there is:
 /// both keys this library knows are its own constants and only one of them is
 /// dotted.
+///
+/// A key already holding the string being written is left alone, and one being
+/// changed keeps the decor around its old value: the comment after it, the
+/// whitespace before it. Dropping a fresh `Item` over the old one would take
+/// both with it, and carrying documents rather than tables is worth its cost
+/// only if what a person wrote beside a value survives being edited.
 pub(crate) fn set(doc: &mut DocumentMut, key: &str, to: &str) -> Result<()> {
     let path: Vec<&str> = key.split('.').collect();
     let (last, tables) = path.split_last().expect("a key is never empty");
@@ -84,6 +90,19 @@ pub(crate) fn set(doc: &mut DocumentMut, key: &str, to: &str) -> Result<()> {
         }
         at = &mut at[*part];
     }
-    at[*last] = value(to);
+
+    match at.get_mut(*last).and_then(Item::as_value_mut) {
+        Some(slot) => {
+            if slot.as_str() == Some(to) {
+                return Ok(());
+            }
+            let decor = slot.decor().clone();
+            *slot = Value::from(to);
+            *slot.decor_mut() = decor;
+        }
+        // Absent, or there and not a value at all. Either way there is no decor
+        // to carry over and the key is written outright.
+        None => at[*last] = value(to),
+    }
     Ok(())
 }
