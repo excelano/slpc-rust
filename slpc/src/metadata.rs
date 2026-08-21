@@ -21,15 +21,24 @@ pub(crate) struct Keys {
 /// bytes it is about to store, so that a document this library writes is one it
 /// would accept back.
 pub(crate) fn parse(bytes: &[u8]) -> Result<(DocumentMut, Keys)> {
-    let text = std::str::from_utf8(bytes).map_err(|_| Malformed::MetadataNotUtf8)?;
-    let doc: DocumentMut = text
-        .parse()
-        .map_err(|e: toml_edit::TomlError| Malformed::MetadataNotToml(e.to_string()))?;
+    let doc = document(bytes)?;
     let keys = Keys {
         version: required_string(&doc, VERSION_KEY)?.to_owned(),
         payload_file: required_string(&doc, PAYLOAD_FILE_KEY)?.to_owned(),
     };
     Ok((doc, keys))
+}
+
+/// Parse a metadata member as TOML, and ask nothing else of it.
+///
+/// This is what SPEC 2.2 requires of the member itself: UTF-8, and a valid
+/// document. Neither required key is looked for, because a container can fail
+/// SPEC 2.1 somewhere else entirely and still have a metadata document worth
+/// reading.
+pub(crate) fn document(bytes: &[u8]) -> Result<DocumentMut> {
+    let text = std::str::from_utf8(bytes).map_err(|_| Malformed::MetadataNotUtf8)?;
+    text.parse()
+        .map_err(|e: toml_edit::TomlError| Malformed::MetadataNotToml(e.to_string()).into())
 }
 
 /// Follow a key through the document.

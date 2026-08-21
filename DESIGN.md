@@ -77,7 +77,10 @@ c.payload_name();     // the value of payload.file
 c.metadata();         // &DocumentMut — the whole TOML document, unknown keys intact
 c.metadata_mut();     // &mut DocumentMut — changed in place
 c.metadata_bytes();   // &[u8] — the metadata member as stored, byte for byte
+c.payload_size()?;    // u64 — uncompressed, read off the central directory
 let mut r = c.payload()?;   // impl Read — streams, never buffered whole
+
+slpc::metadata_of(reader)?;   // -> DocumentMut — the document, no verdict attached
 
 slpc::pack_reader(payload_name, reader, metadata, writer)?;   // metadata: Into<DocumentMut>
 slpc::pack_file(&payload_path, metadata, writer)?;            // name taken from the path
@@ -157,7 +160,7 @@ The specification lists compression, encryption, and Zip64 among the properties 
 
 ### 4.6 Unrecognized versions
 
-The specification requires that an implementation not assume it can read a container declaring a version it does not recognize. Parsing the metadata is how the version is discovered, so parsing and reporting are always allowed. Extracting the payload and rewriting the container are not: both refuse with `Unsupported`, naming the version found.
+The specification requires that an implementation not assume it can read a container declaring a version it does not recognize. Parsing the metadata is how the version is discovered, so parsing and reporting are always allowed. Extracting the payload and rewriting the container are not: both refuse with `Unsupported`, naming the version found. `payload_size` refuses with the rest, since the payload was never located.
 
 ### 4.7 Putting a container on disk
 
@@ -174,6 +177,14 @@ Everything in §4.1 writes into a stream the caller supplies, which is the right
 **The umask is measured rather than read.** What a new file gets is `0666` with the process umask taken out of it, and there is no portable way to read a umask without setting it, which needs a C call and the `unsafe` this crate forbids. So a file is created the ordinary way beside the temporary one, asked what it got, and removed: three system calls, once per destination, and only where there is no file to take a mode from.
 
 **Errors stay in the three families.** A destination that already exists reports `Error::Io` carrying `ErrorKind::AlreadyExists`, and the library says nothing about how a caller lets someone override it, because it has no flags. Naming `--force` is the CLI's job, and it matches on the kind to do it.
+
+### 4.8 A document without a verdict
+
+`metadata_of` reads the metadata member and parses it, requiring of that member what SPEC §2.2 requires — one of it, valid TOML, UTF-8 — and asking nothing else. It looks for neither required key and never locates a payload.
+
+It exists because `Container::read` cannot say two things at once. A container whose `payload.file` names no member, names several, or names something SPEC §2.3 forbids has a metadata document that parsed cleanly, and the read path returns an error over the payload before a caller can reach it. So does one missing a required key. A program showing a person what is in a file wants to show them that document alongside the reason the container is not conformant, and had no way to get it.
+
+**It is not a verdict and must not become one.** A document coming back says nothing about conformance; `validate` remains the only function here that answers the question SPEC §3 constrains, and the separation is what keeps a caller from reading "the metadata parsed" as "the container is fine". `slipcase info` gains from the same function: it refused a container whose metadata it could read perfectly well.
 
 ---
 
@@ -238,7 +249,7 @@ The corpus is built upstream rather than with this implementation, and a corpus 
 
 **An index verb, a corpus scanner, or anything that walks a directory tree.** Searching across many containers is a real need and not this format's problem to solve.
 
-**Desktop integration** — an opener, a file association, an icon, a shell extension. Separate work and separate platforms, and now a separate repository: `excelano/slipcase-desktop` is a graphical application over this library. It is not in this workspace because the fleet's shared CI and this repository's release pipeline are both scoped to a workspace holding one dependency-free command-line binary, and because a window is two hundred crates the people working on the library should not have to build. What it needs from the library goes into the library, where the tool gets it too — §4.7 arrived that way.
+**Desktop integration** — an opener, a file association, an icon, a shell extension. Separate work and separate platforms, and now a separate repository: `excelano/slipcase-desktop` is a graphical application over this library. It is not in this workspace because the fleet's shared CI and this repository's release pipeline are both scoped to a workspace holding one dependency-free command-line binary, and because a window is two hundred crates the people working on the library should not have to build. What it needs from the library goes into the library, where the tool gets it too — §4.7 and §4.8 both arrived that way.
 
 **Key-level metadata editing from the CLI.** `repack --meta` replaces the document wholesale, which needs no syntax of its own: a TOML file goes in as a TOML file. A `set key=value` verb would need a convention for whether `3` is an integer or a string, and inventing one here would be defining a vocabulary the format deliberately does not have. SPEC §5 leaves a vocabulary out of this version rather than out of every version, so the name stays free for one that has something to operate on.
 

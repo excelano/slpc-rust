@@ -202,6 +202,23 @@ impl<R: Read + Seek> Container<R> {
         self.payload_index.is_some()
     }
 
+    /// The payload's length, uncompressed.
+    ///
+    /// Read from the central directory, which already carries it, so this
+    /// decompresses nothing and costs no more than asking. For a caller sizing
+    /// a progress bar, deciding whether a payload fits somewhere, or reporting
+    /// what is in a container without extracting it.
+    ///
+    /// Fails the way [`Container::payload`] does for a container declaring a
+    /// version this build does not implement, since in that case the payload
+    /// was never located.
+    pub fn payload_size(&mut self) -> Result<u64> {
+        let i = self
+            .payload_index
+            .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
+        Ok(self.archive.by_index_raw(i)?.size())
+    }
+
     /// The payload, as a stream.
     ///
     /// Never buffered whole. A payload is a file of arbitrary size, and a
@@ -213,6 +230,48 @@ impl<R: Read + Seek> Container<R> {
             .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
         Ok(self.archive.by_index(i)?)
     }
+}
+
+/// The metadata document of a byte stream, asking no conformance question.
+///
+/// Reads the member SPEC 2.1 names and parses it, requiring of that member what
+/// SPEC 2.2 requires: one of it, valid TOML, UTF-8. It looks for neither
+/// required key and never locates a payload.
+///
+/// This exists because a container can be non-conformant somewhere else
+/// entirely and still carry a metadata document worth reading: `payload.file`
+/// naming no member, naming several, or naming something SPEC 2.3 forbids all
+/// leave a document that parsed cleanly, and [`Container::read`] returns an
+/// error over the payload before a caller can reach it. A program showing a
+/// person what is in a file wants to show them that document.
+///
+/// It is not a verdict and must not be used as one: a document coming back
+/// says nothing about whether the container conforms. Ask
+/// [`validate`](crate::validate) for that, which is the only function here that
+/// answers the question SPEC 3 constrains.
+pub fn metadata_of<R: Read + Seek>(mut reader: R) -> Result<DocumentMut> {
+    let names = central::names(&mut reader)?;
+    reader.rewind()?;
+
+    let mut archive = ZipArchive::new(reader)?;
+    let mut entries = Vec::with_capacity(archive.len());
+    for i in 0..archive.len() {
+        let f = archive.by_index_raw(i)?;
+        entries.push(Entry {
+            raw: f.name_raw().to_owned(),
+            kind: EntryKind::from_mode(f.unix_mode()),
+        });
+    }
+
+    let i = match locate(&entries, &names, METADATA_MEMBER) {
+        Located::One(i) => i,
+        Located::None => return Err(Malformed::NoMetadataMember.into()),
+        Located::Several(n) => return Err(Malformed::DuplicateMetadataMember(n).into()),
+    };
+
+    let mut bytes = Vec::new();
+    archive.by_index(i)?.read_to_end(&mut bytes)?;
+    metadata::document(&bytes)
 }
 
 /// Find the member `payload.file` names, and check it may be a payload.

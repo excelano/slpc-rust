@@ -25,7 +25,7 @@ mod write;
 /// from a dependency of their own is what stops the two from skewing.
 pub use toml_edit;
 
-pub use container::Container;
+pub use container::{metadata_of, Container};
 #[cfg(feature = "fs")]
 pub use dest::Destination;
 pub use error::{EntryKind, Error, Malformed, NameError, Result, Unsupported};

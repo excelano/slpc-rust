@@ -19,7 +19,8 @@ fn main() -> Result<(), slpc::Error> {
 }
 ```
 
-The payload is a stream and is never read into memory. Metadata is exposed as a
+The payload is a stream and is never read into memory; `payload_size` reports
+how long it is without decompressing any of it. Metadata is exposed as a
 document that keeps comments, key order, and whitespace across a rewrite, and as
 the member's bytes for a caller who wants a different parser or a hash.
 
@@ -111,6 +112,12 @@ fn main() -> Result<(), slpc::Error> {
 Four verdicts rather than two. A container whose metadata member cannot be read
 is neither conformant nor non-conformant, and one declaring a version this build
 does not implement is outside the question rather than failing it.
+
+A container can fail elsewhere and still carry a metadata document worth reading
+— `payload.file` naming no member leaves one that parsed cleanly — so
+`metadata_of` returns that document and asks no conformance question. It is not
+a verdict and says nothing about whether the container conforms; `validate` is
+the only function here that answers that.
 
 ## No vocabulary
 

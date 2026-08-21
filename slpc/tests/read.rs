@@ -371,3 +371,166 @@ fn a_container_may_be_its_own_payload() {
     assert_eq!(c.payload_name(), "report.pdf");
     assert_eq!(payload_of(&mut c), b"inner\n");
 }
+
+// --- the payload's size ----------------------------------------------------
+
+#[test]
+fn reports_the_payloads_uncompressed_size() {
+    let payload = b"%PDF-1.7 not really\n";
+    let mut c = open(&container("report.pdf", payload)).unwrap();
+    assert_eq!(c.payload_size().unwrap(), payload.len() as u64);
+}
+
+#[test]
+fn a_payload_of_zero_length_has_a_size_and_not_an_error() {
+    // SPEC 2.3 permits a payload of any length, including zero, so this is a
+    // number rather than a complaint.
+    let mut c = open(&container("empty.bin", b"")).unwrap();
+    assert_eq!(c.payload_size().unwrap(), 0);
+}
+
+#[test]
+fn the_size_is_the_uncompressed_one() {
+    // A deflated payload's stored length is not its length, and a caller sizing
+    // a progress bar or a buffer wants what comes out rather than what sits in
+    // the archive.
+    let text = "a".repeat(4096);
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts: zip::write::FileOptions<'_, ()> =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    w.start_file(METADATA_MEMBER, opts).unwrap();
+    std::io::Write::write_all(&mut w, metadata("big.txt").as_bytes()).unwrap();
+    w.start_file("big.txt", opts).unwrap();
+    std::io::Write::write_all(&mut w, text.as_bytes()).unwrap();
+    let bytes = w.finish().unwrap().into_inner();
+
+    let mut c = open(&bytes).unwrap();
+    assert_eq!(c.payload_size().unwrap(), 4096);
+    assert!(
+        bytes.len() < 2048,
+        "the fixture did not compress, so this proves nothing"
+    );
+}
+
+#[test]
+fn an_unrecognized_version_has_no_payload_to_size() {
+    // The payload was never located, because SPEC 3 forbids applying this
+    // version's rules to a container declaring another. Same answer as asking
+    // for the payload itself.
+    let doc = "slipcase_version = \"9.4\"\n\n[payload]\nfile = \"report.pdf\"\n";
+    let bytes = raw_zip(&[
+        Member::new(METADATA_MEMBER, doc.as_bytes()),
+        Member::new("report.pdf", b"x"),
+    ]);
+    let mut c = open(&bytes).unwrap();
+    assert!(matches!(
+        c.payload_size(),
+        Err(Error::Unsupported(Unsupported::Version(v))) if v == "9.4"
+    ));
+}
+
+// --- the metadata of a container that will not open ------------------------
+
+fn metadata_of(bytes: &[u8]) -> slpc::Result<slpc::toml_edit::DocumentMut> {
+    slpc::metadata_of(std::io::Cursor::new(bytes.to_vec()))
+}
+
+#[test]
+fn hands_back_the_document_of_a_conformant_container() {
+    let doc = metadata_of(&container("report.pdf", b"x")).unwrap();
+    assert_eq!(doc["payload"]["file"].as_str(), Some("report.pdf"));
+}
+
+#[test]
+fn hands_back_the_document_when_payload_file_names_no_member() {
+    // The container is not conformant and its metadata is perfectly readable.
+    // `Container::read` cannot say both, which is why this exists.
+    let bytes = raw_zip(&[Member::new(
+        METADATA_MEMBER,
+        metadata("absent.pdf").as_bytes(),
+    )]);
+    assert!(matches!(
+        open(&bytes),
+        Err(Error::Malformed(Malformed::NoPayloadMember(_)))
+    ));
+
+    let doc = metadata_of(&bytes).unwrap();
+    assert_eq!(doc["payload"]["file"].as_str(), Some("absent.pdf"));
+}
+
+#[test]
+fn hands_back_the_document_when_a_required_key_is_absent() {
+    let bytes = raw_zip(&[Member::new(
+        METADATA_MEMBER,
+        b"title = \"a document with no version key\"\n",
+    )]);
+    assert!(matches!(
+        open(&bytes),
+        Err(Error::Malformed(Malformed::MissingKey(_)))
+    ));
+
+    let doc = metadata_of(&bytes).unwrap();
+    assert_eq!(
+        doc["title"].as_str(),
+        Some("a document with no version key")
+    );
+}
+
+#[test]
+fn hands_back_the_document_when_payload_file_is_a_path() {
+    let bytes = raw_zip(&[Member::new(
+        METADATA_MEMBER,
+        metadata("../etc/passwd").as_bytes(),
+    )]);
+    assert!(matches!(
+        open(&bytes),
+        Err(Error::Malformed(Malformed::PayloadName(
+            NameError::Separator('/')
+        )))
+    ));
+    assert_eq!(
+        metadata_of(&bytes).unwrap()["payload"]["file"].as_str(),
+        Some("../etc/passwd")
+    );
+}
+
+#[test]
+fn keeps_comments_and_key_order() {
+    // The point of handing back a document rather than a struct: a program
+    // showing a person what is in a container shows them what they wrote.
+    let doc = "# who owns this\nslipcase_version = \"1.0\"\nzzz = 1\naaa = 2\n\n[payload]\nfile = \"absent.pdf\"\n";
+    let bytes = raw_zip(&[Member::new(METADATA_MEMBER, doc.as_bytes())]);
+    assert_eq!(metadata_of(&bytes).unwrap().to_string(), doc);
+}
+
+#[test]
+fn refuses_what_spec_2_2_requires_of_the_member_itself() {
+    // One metadata member, valid TOML, UTF-8. Everything past that is another
+    // function's question.
+    let no_member = raw_zip(&[Member::new("report.pdf", b"x")]);
+    assert!(matches!(
+        metadata_of(&no_member),
+        Err(Error::Malformed(Malformed::NoMetadataMember))
+    ));
+
+    let two = raw_zip(&[
+        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new(METADATA_MEMBER, metadata("b.txt").as_bytes()),
+    ]);
+    assert!(matches!(
+        metadata_of(&two),
+        Err(Error::Malformed(Malformed::DuplicateMetadataMember(2)))
+    ));
+
+    let not_toml = raw_zip(&[Member::new(METADATA_MEMBER, b"= not a document\n")]);
+    assert!(matches!(
+        metadata_of(&not_toml),
+        Err(Error::Malformed(Malformed::MetadataNotToml(_)))
+    ));
+
+    let not_utf8 = raw_zip(&[Member::new(METADATA_MEMBER, b"title = \"\xff\xfe\"\n")]);
+    assert!(matches!(
+        metadata_of(&not_utf8),
+        Err(Error::Malformed(Malformed::MetadataNotUtf8))
+    ));
+}

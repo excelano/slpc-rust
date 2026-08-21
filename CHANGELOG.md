@@ -25,6 +25,18 @@ the commit history are the record for those.
   `slipcase` now writes through it rather than through its own copy. No change
   to what the tool does: same permissions, same atomicity, same messages.
 
+- **`Container::payload_size`**, the payload's uncompressed length, read off the
+  central directory without decompressing anything. Refuses the way
+  `Container::payload` does for a container declaring a version this build does
+  not implement, since the payload was never located.
+
+- **`slpc::metadata_of`**, the metadata document of a byte stream with no
+  conformance question attached. A container whose `payload.file` names no
+  member — or names several, or names something SPEC 2.3 forbids, or which is
+  missing a required key — has a metadata document that parsed cleanly, and
+  `Container::read` returns an error over the payload before a caller can reach
+  it. This returns the document. It is not a verdict: `validate` remains the
+  only function that answers the question SPEC 3 constrains.
 
 ## [0.3.0] - 2026-08-20
 
