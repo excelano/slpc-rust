@@ -264,8 +264,17 @@ fn new_file_mode(near: &Path) -> Result<Permissions> {
 /// On Windows, whatever `canonicalize` says about `dir` — so a directory that
 /// is not there is an error here rather than at the first write. Nowhere else.
 pub fn payload_path(dir: &Path, name: &str) -> Result<PathBuf> {
+    // Naming the directory, because the bare `canonicalize` error does not.
+    // `slipcase unpack --dest nowhere` reported *The system cannot find the
+    // file specified. (os error 2)* and left the person to work out which file
+    // — where before this function existed the failure came later, from a
+    // write into `nowhere`, and carried the name. A repair that costs a
+    // sentence somebody reads is not a repair. Caught by an existing CLI test
+    // on the Windows runner added one commit earlier, which is the whole
+    // argument for that job in one line.
     #[cfg(windows)]
-    let dir = std::fs::canonicalize(dir)?;
+    let dir = std::fs::canonicalize(dir)
+        .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", display_path(dir))))?;
 
     Ok(dir.join(name))
 }

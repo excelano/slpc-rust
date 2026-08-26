@@ -217,9 +217,7 @@ mod payload_paths {
     /// Gated with the test that reads it: everywhere else these are ordinary
     /// filenames and the list would be an unused one.
     #[cfg(windows)]
-    const DEVICE_NAMES: [&str; 8] = [
-        "CON", "CON.txt", "con", "COM1", "AUX", "LPT1", "PRN", "NUL",
-    ];
+    const DEVICE_NAMES: [&str; 8] = ["CON", "CON.txt", "con", "COM1", "AUX", "LPT1", "PRN", "NUL"];
 
     /// The defect this catches is a payload landing on a device instead of in
     /// the directory. `dir.join("CON")` is not a path in `dir` on Windows — it
@@ -278,13 +276,29 @@ mod payload_paths {
         );
     }
 
-    /// The defect this catches is `canonicalize` failing at the first write
-    /// rather than where the caller can say something useful about it.
+    /// The defect this catches is a missing directory being reported without
+    /// being named. `canonicalize` says only *The system cannot find the file
+    /// specified*, and the first version of `payload_path` passed that straight
+    /// on — so `slipcase unpack --dest nowhere` stopped naming `nowhere`, which
+    /// it had named before this function existed. An existing CLI test caught
+    /// it on the Windows runner.
     #[test]
     #[cfg(windows)]
-    fn a_directory_that_is_not_there_is_an_error_here() {
+    fn a_directory_that_is_not_there_is_an_error_that_names_it() {
         let dir = sandbox();
-        assert!(payload_path(&dir.path().join("no-such-directory"), "report.pdf").is_err());
+        let missing = dir.path().join("no-such-directory");
+
+        let said = payload_path(&missing, "report.pdf")
+            .expect_err("a directory that is not there is an error")
+            .to_string();
+        assert!(
+            said.contains("no-such-directory"),
+            "the error does not name the directory: {said}"
+        );
+        assert!(
+            !said.contains(r"\\?\"),
+            "the error shows the verbatim form: {said}"
+        );
     }
 
     /// The defect this catches is a person being told their payload went
@@ -337,5 +351,8 @@ fn a_refusal_names_the_file_the_way_a_person_wrote_it() {
         !said.contains(r"\\?\"),
         "the refusal shows the verbatim form: {said}"
     );
-    assert!(said.contains("report.pdf"), "the refusal does not name the file: {said}");
+    assert!(
+        said.contains("report.pdf"),
+        "the refusal does not name the file: {said}"
+    );
 }
