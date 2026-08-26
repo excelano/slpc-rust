@@ -201,3 +201,141 @@ mod permissions {
         assert!(Destination::in_place(s.path().join("absent.slpc")).is_err());
     }
 }
+
+/// Where a container's payload name becomes a path, and what it is shown as.
+mod payload_paths {
+    use super::sandbox;
+    use slpc::{display_path, payload_path};
+    use std::path::Path;
+
+    /// Every name Win32 resolves to a device wherever it appears. `LPT1` and
+    /// `PRN` are here even though they failed cleanly rather than hanging,
+    /// because a clean failure is still a conformant container this build
+    /// refuses; `NUL` is here because it succeeded while discarding the bytes,
+    /// which is the worst of the three answers.
+    ///
+    /// Gated with the test that reads it: everywhere else these are ordinary
+    /// filenames and the list would be an unused one.
+    #[cfg(windows)]
+    const DEVICE_NAMES: [&str; 8] = [
+        "CON", "CON.txt", "con", "COM1", "AUX", "LPT1", "PRN", "NUL",
+    ];
+
+    /// The defect this catches is a payload landing on a device instead of in
+    /// the directory. `dir.join("CON")` is not a path in `dir` on Windows — it
+    /// is the console — so extraction wrote to the terminal, left no file, and
+    /// anything reading the result back waited forever on input that never
+    /// came. `check_payload_name` accepts these names because SPEC 2.3 does,
+    /// and the conformance corpus carries a case for one.
+    ///
+    /// The directory is listed before the payload is read, and that order is
+    /// deliberate: against the defect the listing is empty and this fails
+    /// there, where reading first would hang the whole suite instead.
+    #[test]
+    #[cfg(windows)]
+    fn a_name_windows_reads_as_a_device_still_lands_in_the_directory() {
+        for name in DEVICE_NAMES {
+            let dir = sandbox();
+            let bytes = format!("bytes for {name}").into_bytes();
+
+            let path = payload_path(dir.path(), name).expect("a path for the name");
+            std::fs::write(&path, &bytes).expect("writes the payload");
+
+            let listed: Vec<_> = std::fs::read_dir(dir.path())
+                .expect("the directory")
+                .map(|e| e.expect("an entry").file_name())
+                .collect();
+            assert!(
+                listed.iter().any(|entry| entry == name),
+                "{name}: nothing by that name is in the directory, so the payload went \
+                 to a device rather than to a file. Listed: {listed:?}"
+            );
+
+            assert_eq!(
+                std::fs::read(&path).expect("reads the payload back"),
+                bytes,
+                "{name}: what came back is not what was written"
+            );
+            std::fs::remove_file(&path).expect("the payload is removable");
+        }
+    }
+
+    /// An ordinary name lands where it always did, on every platform. The
+    /// defect this catches is the repair above changing where a payload goes
+    /// for the overwhelming majority of names, which have never had a problem.
+    #[test]
+    fn an_ordinary_name_lands_in_the_directory_it_was_given() {
+        let dir = sandbox();
+        let path = payload_path(dir.path(), "report.pdf").expect("a path");
+
+        std::fs::write(&path, b"payload").expect("writes");
+        assert_eq!(std::fs::read(&path).expect("reads back"), b"payload");
+        assert_eq!(path.file_name().expect("a filename"), "report.pdf");
+        assert_eq!(
+            display_path(&path),
+            dir.path().join("report.pdf").display().to_string(),
+            "what a person is shown is not the path they would have written"
+        );
+    }
+
+    /// The defect this catches is `canonicalize` failing at the first write
+    /// rather than where the caller can say something useful about it.
+    #[test]
+    #[cfg(windows)]
+    fn a_directory_that_is_not_there_is_an_error_here() {
+        let dir = sandbox();
+        assert!(payload_path(&dir.path().join("no-such-directory"), "report.pdf").is_err());
+    }
+
+    /// The defect this catches is a person being told their payload went
+    /// somewhere they have never seen and could not type. Nothing else takes
+    /// the prefix off, so a caller that reaches for `Path::display` directly
+    /// prints `\\?\C:\…`.
+    #[test]
+    fn the_verbatim_prefix_is_not_shown_to_a_person() {
+        assert_eq!(
+            display_path(Path::new(r"\\?\C:\Users\a\report.pdf")),
+            r"C:\Users\a\report.pdf"
+        );
+    }
+
+    /// The same trick applied to a network path, where dropping the prefix
+    /// whole would leave `server\share` — a relative path, and not anywhere.
+    #[test]
+    fn a_verbatim_network_path_keeps_its_two_separators() {
+        assert_eq!(
+            display_path(Path::new(r"\\?\UNC\server\share\report.pdf")),
+            r"\\server\share\report.pdf"
+        );
+    }
+
+    /// The defect this catches is the stripping going too far and rewriting
+    /// paths that never carried the prefix — which is every path on every
+    /// platform but one.
+    #[test]
+    fn a_path_that_never_had_the_prefix_is_untouched() {
+        for ordinary in [r"C:\Users\a\report.pdf", "/home/a/report.pdf", "report.pdf"] {
+            assert_eq!(display_path(Path::new(ordinary)), ordinary);
+        }
+    }
+}
+
+/// The defect this catches is a refusal telling somebody that
+/// `\\?\C:\…\report.pdf` exists — a spelling they have never seen and did not
+/// write. `payload_path` is what can put a verbatim path into this message, so
+/// it is what makes this reachable.
+#[test]
+#[cfg(windows)]
+fn a_refusal_names_the_file_the_way_a_person_wrote_it() {
+    let dir = sandbox();
+    let path = slpc::payload_path(dir.path(), "report.pdf").expect("a path");
+    std::fs::write(&path, b"already here").expect("the file in the way");
+
+    let refusal = Destination::new(&path, false).expect_err("must refuse");
+    let said = refusal.to_string();
+    assert!(
+        !said.contains(r"\\?\"),
+        "the refusal shows the verbatim form: {said}"
+    );
+    assert!(said.contains("report.pdf"), "the refusal does not name the file: {said}");
+}

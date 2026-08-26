@@ -306,10 +306,14 @@ fn unpack(a: Unpack) -> Result<()> {
     let mut c = Container::read(input::container(&a.container)?)?;
     let dest = a.dest.unwrap_or_else(|| PathBuf::from("."));
 
-    // payload.file is a plain filename, checked against SPEC 2.3 when the
-    // container was read, so joining it to a destination cannot leave that
-    // destination. That is what the rule is for.
-    let mut payload_out = Destination::new(&dest.join(c.payload_name()), a.force)?;
+    // Through `payload_path` rather than `dest.join`, and the comment this
+    // replaces is why. It said: payload.file is a plain filename, checked
+    // against SPEC 2.3 when the container was read, so joining it to a
+    // destination cannot leave that destination. True, and not the question —
+    // `CON` does not leave the directory, it is not in it. Leaving the
+    // directory was never the only way for a name to fail to be a file.
+    let out = slpc::payload_path(&dest, c.payload_name())?;
+    let mut payload_out = Destination::new(&out, a.force)?;
 
     // Both destinations are reserved before either is written, so --metadata
     // over an existing file fails before the payload has already landed.

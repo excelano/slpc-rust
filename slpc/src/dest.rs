@@ -176,7 +176,12 @@ impl Destination {
 fn already_exists(path: &Path) -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::AlreadyExists,
-        format!("{} exists", path.display()),
+        // Through `display_path`, because since `payload_path` exists a caller
+        // can hand this function the `\\?\` verbatim form, and this string is
+        // read by a person deciding what to do about the file. Identical for
+        // every path that never carried the prefix, which is all of them
+        // everywhere but Windows.
+        format!("{} exists", display_path(path)),
     )
 }
 
@@ -206,4 +211,89 @@ fn new_file_mode(near: &Path) -> Result<Permissions> {
 
     std::fs::remove_file(&probe)?;
     Ok(mode?)
+}
+
+/// Where a payload named `name` belongs inside `dir`, spelled the way this
+/// platform can address it.
+///
+/// [`check_payload_name`](crate::check_payload_name) answers whether a name is
+/// legal under SPEC 2.3. This answers a question the specification does not
+/// ask: whether that legal name, joined to a directory, names a file on the
+/// machine doing the joining. On Windows it may not, and the reason is not
+/// traversal.
+///
+/// **`dir.join(name)` is not enough, and the argument that it is has now been
+/// written twice.** It goes: `payload.file` is a plain filename checked against
+/// SPEC 2.3, which rejects every separator and every traversal, so joining it
+/// to a directory cannot leave that directory. That is true, and it is not the
+/// question. Win32 resolves a handful of names — `CON`, `CON.txt`, `con`,
+/// `COM1`, `AUX`, `LPT1`, `PRN`, `NUL` — to devices wherever the name appears.
+/// `CON` does not leave the directory. It is not in it.
+///
+/// Measured in `excelano/slipcase-desktop` on 2026-08-26, one name at a time,
+/// because they do not agree with one another. Writing `CON` returned `Ok` at
+/// every step and left no file, the bytes having gone to the console; `metadata`
+/// then failed with code 87, and `std::fs::read` **never returned**, because it
+/// opens the console for reading and waits for input a window will never
+/// supply. `LPT1` and `PRN` failed cleanly with `NotFound`. `NUL` succeeded and
+/// discarded the bytes. So there is no one failure to code against, and the
+/// conformance corpus did not disagree — it hung.
+///
+/// Windows looks for those names while it *parses* a path, and a path in the
+/// `\\?\` verbatim form is not parsed that way. `canonicalize` answers in that
+/// form, so this asks it of the directory and joins the name onto the answer.
+/// Every name above then wrote, read back byte for byte, and was removable,
+/// exactly as an ordinary name does.
+///
+/// **Nothing here holds a list of reserved names.** The prefix is asked of the
+/// directory rather than spelled onto the path, so which names are devices
+/// stays Windows's to know, and it goes on knowing it as the list changes.
+///
+/// Everywhere else the directory is the directory and this joins and returns.
+/// The `\\?\` form is deliberately not produced on Unix: `canonicalize` there
+/// would also resolve symbolic links, which would quietly change where a
+/// caller's payload lands to fix a problem that platform does not have.
+///
+/// What this does not fix is opening the result. A file named for a device
+/// extracts and is a real file; handing it to the shell still fails, with *the
+/// specified device name is invalid*. That is a truth about the container on
+/// that platform rather than a defect left behind.
+///
+/// # Errors
+///
+/// On Windows, whatever `canonicalize` says about `dir` — so a directory that
+/// is not there is an error here rather than at the first write. Nowhere else.
+pub fn payload_path(dir: &Path, name: &str) -> Result<PathBuf> {
+    #[cfg(windows)]
+    let dir = std::fs::canonicalize(dir)?;
+
+    Ok(dir.join(name))
+}
+
+/// A path as it should be shown to a person.
+///
+/// [`payload_path`] hands back the `\\?\` verbatim form on Windows, because
+/// that is what addresses a file whose name Windows would otherwise read as a
+/// device. The prefix is how a path is addressed and not part of its name, so
+/// printing it would tell somebody their payload went to a place spelled in a
+/// way they have never seen and could not type. This crate introduced the
+/// prefix, so this crate owes a caller the way to take it off.
+///
+/// Only the display form changes: every filesystem call keeps the spelling that
+/// works. A no-op on a path that never carried the prefix, so a caller does not
+/// have to know which kind it is holding.
+#[must_use]
+pub fn display_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    let Some(rest) = text.strip_prefix(r"\\?\") else {
+        return text;
+    };
+    // `\\?\UNC\server\share` is the same trick applied to a network path, and
+    // putting the two leading separators back is what makes it the name a
+    // person knows again. Stripping the prefix whole would leave
+    // `server\share`, which is a relative path and not anywhere.
+    match rest.strip_prefix(r"UNC\") {
+        Some(share) => format!(r"\\{share}"),
+        None => rest.to_owned(),
+    }
 }

@@ -203,6 +203,23 @@ The risk it carries is drift: the two conditions are mirrored from inside the ZI
 
 ---
 
+### 4.10 A legal name that is not a file
+
+`check_payload_name` answers whether a name is legal under SPEC §2.3. `payload_path` answers a question the specification does not ask: whether that legal name, joined to a directory, names a file on the machine doing the joining.
+
+**The argument that `dir.join(name)` suffices was written independently in two codebases, and it is wrong in the same way in both.** It goes: `payload.file` is a plain filename, checked when the container was read against a rule that rejects every separator and every traversal, so joining it to a directory cannot leave that directory. That is true and it is not the question. Win32 resolves `CON`, `COM1`, `AUX`, `LPT1`, `PRN` and `NUL` to devices wherever the name appears, with or without an extension and in any case. `CON` does not leave the directory. It is not in it.
+
+**Measured rather than reasoned about**, in `excelano/slipcase-desktop` on 2026-08-26, and one name at a time because they do not agree with one another. Writing `CON` returned `Ok` at every step and left no file, the bytes having gone to the console; `metadata` then failed with code 87, and `std::fs::read` never returned at all, because it opens the console for reading and waits for input a windowed application will never supply. `LPT1` and `PRN` failed cleanly with `NotFound`. `NUL` succeeded and discarded. There is no single failure to code against, which is why the conformance corpus did not disagree over the case that carries such a name — it hung, twice, for ten minutes, before the case had a name.
+
+**The repair is not a list of reserved names.** Windows looks for those names while it parses a path, and a path in the `\\?\` verbatim form is not parsed that way, so `canonicalize` is asked of the *directory* and the name is joined onto the answer. The name stops being a device without anything here calling it a bad name, and which names are devices stays Windows's business as that list changes. Three alternatives were rejected: refusing these names in `check_payload_name` makes a conformant container unopenable and contradicts SPEC §2.3; renaming the payload substitutes an implementation's judgement for the name a person chose; and refusing extraction with a sentence is the smallest of the three and still turns a conformant container into one this implementation will not open.
+
+**Nowhere but Windows does anything.** `canonicalize` on Unix would also resolve symbolic links, which would quietly move where a caller's payload lands in order to fix a problem that platform does not have, so the other arm joins and returns. This is the first `cfg` in the library's source, and §3's rule is untouched by it: no dependency is added and nothing is compiled that was not compiled before.
+
+**It costs a display rule, paid separately.** The path handed back is the verbatim one, because that is what addresses the file, and the prefix is how a path is addressed rather than part of its name. `display_path` takes it off and nothing else does, so *Extracted to* does not show somebody a spelling they have never seen and could not type. `already_exists` goes through it too, that message being read by a person deciding what to do about the file.
+
+**What is not fixed is the handover.** A payload named for a device now extracts as an ordinary file and is read back byte for byte; asking the shell to open it still fails, with *the specified device name is invalid*. That is the truth about that container on that platform rather than a defect left standing.
+
+
 ## 5. The CLI
 
 Five verbs. Each does one thing the format supports.
