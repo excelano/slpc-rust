@@ -30,6 +30,48 @@ jobs:
       - uses: actions/checkout@v6
       - run: ./check-shared-docs.py
 
+  # The fleet's shared workflow runs on `ubuntu-latest` and nothing else. That
+  # was right while nothing here behaved differently per platform, and it is not
+  # right now: `Destination` reserves a temporary file beside the target, sets
+  # permissions on it, and renames it into place, and none of those three mean
+  # on Windows what they mean on Unix. `set_permissions` with a mode is close to
+  # a no-op there, a rename over a file somebody has open is refused rather than
+  # allowed, and `tests/dest.rs` already carries a `#[cfg(unix)]` module whose
+  # absent counterpart nobody has ever compiled. Every one of those is a claim
+  # this repository makes on two platforms it has never run on.
+  #
+  # Repository-local rather than a matrix in `rust-ci.yml`, on the same grounds
+  # the `docs` job above gives for staying here: no other repository in the
+  # fleet has this problem, and raising the shared floor to three runners would
+  # spend every Rust repository's minutes on it. When a second one grows
+  # platform code, the shared workflow is where this belongs.
+  #
+  # `fail-fast: false` because the two runners are the measurement. Letting the
+  # first failure cancel the other would answer half the question and look like
+  # it had answered all of it.
+  platforms:
+    name: Platforms
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # `--all-features` so the `fs` feature is in: it is what `Destination`
+      # lives behind, and it is the whole reason this job exists.
+      - name: Test
+        run: cargo test --workspace --all-features
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
   # The floor declared in Cargo.toml, built and tested rather than asserted.
   # It is not this code's floor — nothing written here needs more than the
   # edition implies — it is `zip`'s, which means it rises whenever `zip` raises
