@@ -261,6 +261,14 @@ mod payload_paths {
     /// An ordinary name lands where it always did, on every platform. The
     /// defect this catches is the repair above changing where a payload goes
     /// for the overwhelming majority of names, which have never had a problem.
+    ///
+    /// It asks whether the path names the same file, not whether it is spelled
+    /// the same way, and the difference is a measurement. This test first
+    /// compared the two as strings and failed on the Windows runner with
+    /// `C:\Users\runneradmin\…` against `C:\Users\RUNNER~1\…`: `canonicalize`
+    /// expands 8.3 short names as well as adding the prefix. So `payload_path`
+    /// reports where the file *is* rather than how the caller spelled it, and
+    /// asserting the spelling would have been asserting something untrue.
     #[test]
     fn an_ordinary_name_lands_in_the_directory_it_was_given() {
         let dir = sandbox();
@@ -269,10 +277,17 @@ mod payload_paths {
         std::fs::write(&path, b"payload").expect("writes");
         assert_eq!(std::fs::read(&path).expect("reads back"), b"payload");
         assert_eq!(path.file_name().expect("a filename"), "report.pdf");
+
+        // The same file, asked of the filesystem rather than of the two
+        // strings, which is the only comparison that holds on every platform.
         assert_eq!(
-            display_path(&path),
-            dir.path().join("report.pdf").display().to_string(),
-            "what a person is shown is not the path they would have written"
+            std::fs::canonicalize(&path).expect("the path resolves"),
+            std::fs::canonicalize(dir.path().join("report.pdf")).expect("so does the join"),
+            "the payload did not land in the directory it was given"
+        );
+        assert!(
+            !display_path(&path).contains(r"\\?\"),
+            "what a person is shown carries the verbatim prefix"
         );
     }
 

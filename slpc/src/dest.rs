@@ -249,6 +249,15 @@ fn new_file_mode(near: &Path) -> Result<Permissions> {
 /// directory rather than spelled onto the path, so which names are devices
 /// stays Windows's to know, and it goes on knowing it as the list changes.
 ///
+/// **On Windows it reports where the file is, not how the caller spelled it.**
+/// `canonicalize` expands 8.3 short names and resolves junctions as well as
+/// adding the prefix, so a caller who passed `C:\Users\RUNNER~1\…` gets
+/// `C:\Users\runneradmin\…` back. Measured on a Windows runner, by a test that
+/// asserted the spelling and was wrong to. That is the canonical name of the
+/// same file and is the one a person can paste into Explorer, so it is left
+/// alone rather than folded back — but a caller comparing this against a path
+/// of their own must compare files and not strings.
+///
 /// Everywhere else the directory is the directory and this joins and returns.
 /// The `\\?\` form is deliberately not produced on Unix: `canonicalize` there
 /// would also resolve symbolic links, which would quietly change where a
