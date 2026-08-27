@@ -866,3 +866,50 @@ fn repack_to_standard_output_marks_no_file_called_dash() {
         "and it was not written to either"
     );
 }
+
+/// `info` onto a terminal escapes; the branch is reachable and it is tested.
+///
+/// **The half `info_redirected_is_the_member_and_not_a_rendering` admits it
+/// does not cover.** That test pipes, which is the byte-for-byte path; the
+/// escaping — the part SPEC §3 actually requires — could be deleted and every
+/// test still passed. `script` gives the child a pseudo-terminal, so
+/// `IsTerminal` is true and the other branch runs.
+#[test]
+#[cfg(unix)]
+fn info_onto_a_terminal_escapes_the_override() {
+    let s = Sandbox::new();
+    let o = s.pipe(
+        &[
+            "pack",
+            "-",
+            "--name",
+            "report\u{202E}fdp.exe",
+            "-o",
+            "c.slpc",
+        ],
+        b"MZ\n",
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+
+    let run = std::process::Command::new("script")
+        .args(["-qec", &format!("{BIN} info c.slpc"), "/dev/null"])
+        .current_dir(s.path())
+        .output();
+    let Ok(run) = run else {
+        eprintln!("skipped: no `script` to give the child a terminal");
+        return;
+    };
+    if !run.status.success() {
+        eprintln!("skipped: `script` would not run here");
+        return;
+    }
+    let shown = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        shown.contains(r"report\u{202E}fdp.exe"),
+        "the override was not escaped onto a terminal: {shown:?}"
+    );
+    assert!(
+        !shown.contains('\u{202E}'),
+        "the raw override reached a terminal: {shown:?}"
+    );
+}

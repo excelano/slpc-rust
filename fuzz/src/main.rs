@@ -15,6 +15,18 @@
 //! Deterministic: the same `--seed` produces the same run. A case that fails is
 //! reproducible from its number, and is written out besides.
 //!
+//! **What it does not reach, stated because a clean run invites more faith than
+//! it has earned.** It cannot see a wrong answer, only a crash or a hang; a
+//! container that validates as conformant when it should not is the
+//! conformance corpus's job and the two are complements. And it does not reach
+//! the metadata bound's real guarantee — the cap on the bytes as they arrive
+//! rather than the cheap refusal on the size the directory declares. Mutations
+//! grow an input by a few times, not by the two orders of magnitude between the
+//! largest corpus seed and a 1 MiB bound, and the run prints its largest input
+//! beside the largest seed so that this stays visible rather than assumed.
+//! `a_lying_recorded_size_does_not_get_past_the_bound` in `slpc/tests/read.rs`
+//! is what holds that path, and it bites.
+//!
 //! Usage:
 //!
 //!     cargo run --release -p fuzz -- /path/to/slipcase/conformance
@@ -74,14 +86,31 @@ impl Rng {
     }
 }
 
-/// The four ZIP signatures worth landing a mutation next to.
-const SIGNATURES: [u32; 4] = [0x0403_4B50, 0x0201_4B50, 0x0605_4B50, 0x0606_4B50];
+/// The five ZIP signatures worth landing a mutation next to.
+///
+/// The Zip64 locator, 0x0706_4B50, was missing until 2026-08-27 — the record
+/// carrying the offset of the Zip64 record, and so the mechanism behind one of
+/// the three findings this harness was written after. A mutator that never aims
+/// at a structure cannot find a defect in how that structure is read.
+const SIGNATURES: [u32; 5] = [
+    0x0403_4B50,
+    0x0201_4B50,
+    0x0605_4B50,
+    0x0606_4B50,
+    0x0706_4B50,
+];
 
 /// Values a length or an offset is interesting at.
-const EDGES: [u64; 10] = [
+const EDGES: [u64; 12] = [
     0,
     1,
     2,
+    // 3 and 4 are here because a count is interesting one either side of what
+    // the archive really holds, and at width 2 the rest of this table collapses
+    // to {0, 1, 2, 0xFFFE, 0xFFFF} — so the shape of the counts-disagree
+    // finding was reachable only from a seed that already contained it.
+    3,
+    4,
     0xFFFF - 1,
     0xFFFF,
     0x1_0000,
@@ -103,7 +132,7 @@ fn mutate(seed: &[u8], rng: &mut Rng) -> Vec<u8> {
         if out.is_empty() {
             break;
         }
-        match rng.below(6) {
+        match rng.below(7) {
             // A field beside a signature. The mutation that finds structural
             // defects, and the one a bit-flipper almost never stumbles into.
             0 | 1 => {
@@ -118,7 +147,9 @@ fn mutate(seed: &[u8], rng: &mut Rng) -> Vec<u8> {
                     continue;
                 }
                 let at = sites[rng.below(sites.len())];
-                let field = at + 4 + rng.below(44);
+                // Far enough to reach a Zip64 record's own count and offset
+                // fields at bytes 24..56, which a 44-byte window never did.
+                let field = at + 4 + rng.below(56);
                 let value = EDGES[rng.below(EDGES.len())];
                 let width = [2usize, 4, 8][rng.below(3)];
                 if field + width <= out.len() {
@@ -138,6 +169,20 @@ fn mutate(seed: &[u8], rng: &mut Rng) -> Vec<u8> {
             4 => {
                 let keep = rng.below(out.len());
                 out.truncate(keep);
+            }
+            // Grow it. Every other arm keeps the length or shortens it, so
+            // until 2026-08-27 no mutation could make an input longer than its
+            // seed — the longest this harness had ever generated was 4,437
+            // bytes against a 1 MiB metadata bound, which meant the bound's
+            // real guarantee, the cap on the bytes as they arrive, was never
+            // once exercised in 32 million cases. Duplicating a run is the
+            // cheapest way to reach a size no seed carries.
+            5 => {
+                let len = 1 + rng.below(out.len().min(4096));
+                let from = rng.below(out.len() - len + 1);
+                let at = rng.below(out.len());
+                let chunk = out[from..from + len].to_vec();
+                out.splice(at..at, chunk);
             }
             // Splice a run of the file over itself.
             _ => {
@@ -171,6 +216,14 @@ struct Reach {
     metadata_parsed: u64,
     payload_read: u64,
     repacked: u64,
+    /// The largest input generated, against the largest seed.
+    ///
+    /// The bound SPEC 6 requires is on the metadata member's decompressed size,
+    /// and its real guarantee is the cap on the bytes as they arrive rather
+    /// than the cheap refusal on the size the directory declares. Reaching that
+    /// needs an input bigger than any seed, so whether one was ever built is a
+    /// fact this run has to be able to state.
+    largest: usize,
 }
 
 /// Everything a caller can ask of a byte stream, asked of one.
@@ -214,8 +267,14 @@ fn exercise(bytes: &[u8], reach: &mut Reach) {
 
     // The rewrite path, which reading alone never touches. SPEC 3 requires that
     // members an implementation does not recognise survive a rewrite, so this
-    // is the code that walks every member of a container somebody else wrote —
-    // including the ones a mutation has made strange — and copies them through.
+    // is the code that walks every member of a container somebody else wrote and
+    // copies them through.
+    //
+    // The count it feeds tracks `conformant` exactly, and that is worth knowing
+    // rather than reading as a second axis of depth: `Repack` succeeds on what
+    // `validate` accepts and on nothing else, so a container a mutation made
+    // strange never gets past `Repack::new`. It stays counted because a
+    // divergence between the two numbers would itself be a finding.
     let mut out = Cursor::new(Vec::new());
     if slpc::Repack::new(Cursor::new(bytes))
         .write(&mut out)
@@ -282,7 +341,11 @@ fn main() -> std::process::ExitCode {
     // is how the first version of it exited 101 with nothing to say.
     let default = std::panic::take_hook();
 
-    let mut rng = Rng(args.seed | 1);
+    // Mixed rather than `seed | 1`, which was how this started and which made
+    // every even seed the odd one above it: seeds 1 through 8 gave five
+    // distinct runs and three exact repeats. Measured 2026-08-27, and the
+    // "eight seeds" a campaign was reported under were five.
+    let mut rng = Rng(args.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
     let started = Instant::now();
     let mut panics = 0u64;
     let mut slow = 0u64;
@@ -299,6 +362,7 @@ fn main() -> std::process::ExitCode {
 
         let at = Instant::now();
         let mut this = Reach::default();
+        reach.largest = reach.largest.max(bytes.len());
         std::panic::set_hook(Box::new(|_| {}));
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             exercise(&bytes, &mut this);
@@ -355,6 +419,11 @@ fn main() -> std::process::ExitCode {
     println!(
         "           {} parsed the metadata, {} read a payload, {} rewrote and read back",
         reach.metadata_parsed, reach.payload_read, reach.repacked
+    );
+    let biggest_seed = seeds.iter().map(|(_, b)| b.len()).max().unwrap_or(0);
+    println!(
+        "           largest input {} bytes, against a largest seed of {}",
+        reach.largest, biggest_seed
     );
     if panics == 0 && slow == 0 {
         std::process::ExitCode::SUCCESS

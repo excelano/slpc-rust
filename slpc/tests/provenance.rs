@@ -180,6 +180,29 @@ fn writing_a_new_file_inherits_nothing() {
     let mut d = slpc::Destination::new(&fresh, false).unwrap();
     d.writer().write_all(b"mine").unwrap();
     d.commit().unwrap();
-
     assert!(!arrived_from_elsewhere(&fresh));
+
+    // And the case that actually bites. Writing to a path that does not exist
+    // proves nothing: there is no original to inherit from whatever the code
+    // does. `new` over a file that *is* marked is where an over-eager carry
+    // shows — it would take the mark of the file it is replacing, which is
+    // `in_place`'s job and not this one. A caller naming an output file is
+    // creating a file there, and one that happened to be in the way does not
+    // decide where the new one came from.
+    let over = s.path().join("over.slpc");
+    std::fs::write(&over, b"in the way").unwrap();
+    if !mark_as_downloaded(&over) {
+        eprintln!("skipped: this filesystem will not hold a mark");
+        return;
+    }
+    assert!(arrived_from_elsewhere(&over));
+
+    let mut d = slpc::Destination::new(&over, true).unwrap();
+    d.writer().write_all(b"mine").unwrap();
+    d.commit().unwrap();
+
+    assert!(
+        !arrived_from_elsewhere(&over),
+        "a new file inherited the mark of the one it replaced"
+    );
 }

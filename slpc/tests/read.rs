@@ -927,6 +927,12 @@ fn the_two_entry_counts_must_agree() {
 /// looking when the answer does not fit, so a file with a second record whose
 /// comment length overruns leaves the two halves of this crate reading two
 /// different central directories.
+///
+/// The `is_conformant` assertion below is not the one that bites: with the
+/// guard removed the ZIP crate refuses this single-record fixture on its own,
+/// for its own reason. It is the message that discriminates, and the corpus
+/// case of the same name — rebuilt as two records on 2026-08-27, after it was
+/// found not to discriminate either — is what covers the split itself.
 #[test]
 fn the_record_must_end_the_file() {
     let mut bytes = duplicate_payload_archive();
@@ -947,6 +953,12 @@ fn the_record_must_end_the_file() {
 /// reader sees. Nothing produces a multi-disk container and nothing here could
 /// read one, so the honest answer is to say so rather than to read whichever
 /// part happens to be in front of us.
+///
+/// The `is_conformant` assertion is not what bites here either: without the
+/// guard the ZIP crate answers *undetermined* rather than conformant, because
+/// it does not implement multi-disk. What this holds is that the refusal is
+/// this crate's own and says so — which is the difference between a container
+/// refused by rule and one refused for want of a feature.
 #[test]
 fn a_multi_disk_archive_is_refused() {
     // An otherwise ordinary container, so the disk field is the only thing

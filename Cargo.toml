@@ -27,6 +27,18 @@ slpc = { path = "slpc", version = "0.3.9" }
 # cargo-dist builds release binaries under this profile. Thin LTO rather than
 # fat: the link is a fraction of the time and the size difference on a binary
 # this small does not pay for the rest.
+# Overflow checks stay on in release, and that is for `fuzz/`.
+#
+# The harness names "arithmetic on a length an attacker chose" as one of three
+# classes it exists to find, and is documented to be run with `--release`
+# because 32 million cases in a debug build is not a campaign. Release turns
+# overflow checks off by default, so it was running in the one mode that cannot
+# see that class: measured 2026-08-27 against an injected overflow on a field
+# read straight out of the end of central directory record — 3,000 cases found
+# 110 panics in debug and none in release. It costs 2.9% on a 200,000-case run.
+[profile.release]
+overflow-checks = true
+
 [profile.dist]
 inherits = "release"
 lto = "thin"
