@@ -61,8 +61,10 @@ the commit history are the record for those.
   compare files and not strings.
 
 - **The `provenance` feature**, off by default and separate from `fs`. It adds
-  one crate on Unix and none on Windows, where an alternate data stream is
-  reached through `std::fs`. `provenance::arrived_from_elsewhere` is there for a
+  no crates on Windows, where an alternate data stream is reached through
+  `std::fs`, and on Unix one crate on top of `fs` or four on its own — `fs`
+  already brings `xattr`'s tree of `rustix`, `bitflags` and `linux-raw-sys` in
+  through `tempfile`. `provenance::arrived_from_elsewhere` is there for a
   caller that wants to report where a container came from rather than act on it.
 
 ### Changed

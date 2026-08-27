@@ -216,62 +216,41 @@ fn new_file_mode(near: &Path) -> Result<Permissions> {
 /// Where a payload named `name` belongs inside `dir`, spelled the way this
 /// platform can address it.
 ///
+/// **Use this rather than `dir.join(name)`.**
 /// [`check_payload_name`](crate::check_payload_name) answers whether a name is
-/// legal under SPEC 2.3. This answers a question the specification does not
-/// ask: whether that legal name, joined to a directory, names a file on the
-/// machine doing the joining. On Windows it may not, and the reason is not
-/// traversal.
+/// legal under SPEC 2.3, and a legal name is not always a file. Win32 resolves
+/// `CON`, `CON.txt`, `con`, `COM1`, `AUX`, `LPT1`, `PRN` and `NUL` to devices
+/// wherever the name appears, so `dir.join("CON")` is the console rather than a
+/// path in `dir`. It is not a traversal, and the check against SPEC 2.3 does not
+/// catch it — writing there can silently discard the payload, and reading it
+/// back can block forever.
 ///
-/// **`dir.join(name)` is not enough, and the argument that it is has now been
-/// written twice.** It goes: `payload.file` is a plain filename checked against
-/// SPEC 2.3, which rejects every separator and every traversal, so joining it
-/// to a directory cannot leave that directory. That is true, and it is not the
-/// question. Win32 resolves a handful of names — `CON`, `CON.txt`, `con`,
-/// `COM1`, `AUX`, `LPT1`, `PRN`, `NUL` — to devices wherever the name appears.
-/// `CON` does not leave the directory. It is not in it.
+/// On Windows this answers in the `\\?\` verbatim form, which reaches the
+/// filesystem without those names being looked for. Nothing here keeps a list of
+/// reserved names: the form is asked of the *directory*, so which names are
+/// devices stays Windows's to know as that list changes.
 ///
-/// Measured in `excelano/slipcase-desktop` on 2026-08-26, one name at a time,
-/// because they do not agree with one another. Writing `CON` returned `Ok` at
-/// every step and left no file, the bytes having gone to the console; `metadata`
-/// then failed with code 87, and `std::fs::read` **never returned**, because it
-/// opens the console for reading and waits for input a window will never
-/// supply. `LPT1` and `PRN` failed cleanly with `NotFound`. `NUL` succeeded and
-/// discarded the bytes. So there is no one failure to code against, and the
-/// conformance corpus did not disagree — it hung.
+/// **Two things a caller has to know about the result.** It is where the file
+/// *is* rather than how the caller spelled it — `canonicalize` expands 8.3 short
+/// names and resolves junctions — so compare files rather than strings if you
+/// hold a path of your own. And [`display_path`] is what takes the prefix off
+/// before a person reads it, since the prefix is how a path is addressed and not
+/// part of its name.
 ///
-/// Windows looks for those names while it *parses* a path, and a path in the
-/// `\\?\` verbatim form is not parsed that way. `canonicalize` answers in that
-/// form, so this asks it of the directory and joins the name onto the answer.
-/// Every name above then wrote, read back byte for byte, and was removable,
-/// exactly as an ordinary name does.
+/// Everywhere but Windows the directory is the directory and this joins and
+/// returns. The verbatim form is deliberately not produced on Unix, where
+/// `canonicalize` would also resolve symbolic links and so move where a payload
+/// lands to fix a problem that platform does not have.
 ///
-/// **Nothing here holds a list of reserved names.** The prefix is asked of the
-/// directory rather than spelled onto the path, so which names are devices
-/// stays Windows's to know, and it goes on knowing it as the list changes.
-///
-/// **On Windows it reports where the file is, not how the caller spelled it.**
-/// `canonicalize` expands 8.3 short names and resolves junctions as well as
-/// adding the prefix, so a caller who passed `C:\Users\RUNNER~1\…` gets
-/// `C:\Users\runneradmin\…` back. Measured on a Windows runner, by a test that
-/// asserted the spelling and was wrong to. That is the canonical name of the
-/// same file and is the one a person can paste into Explorer, so it is left
-/// alone rather than folded back — but a caller comparing this against a path
-/// of their own must compare files and not strings.
-///
-/// Everywhere else the directory is the directory and this joins and returns.
-/// The `\\?\` form is deliberately not produced on Unix: `canonicalize` there
-/// would also resolve symbolic links, which would quietly change where a
-/// caller's payload lands to fix a problem that platform does not have.
-///
-/// What this does not fix is opening the result. A file named for a device
-/// extracts and is a real file; handing it to the shell still fails, with *the
-/// specified device name is invalid*. That is a truth about the container on
-/// that platform rather than a defect left behind.
+/// Opening the result is a separate question and still fails: the shell answers
+/// *the specified device name is invalid* for a file named after one. That is
+/// the truth about such a container on that platform rather than something left
+/// undone here.
 ///
 /// # Errors
 ///
-/// On Windows, whatever `canonicalize` says about `dir` — so a directory that
-/// is not there is an error here rather than at the first write. Nowhere else.
+/// On Windows, whatever `canonicalize` says about `dir`, so a directory that is
+/// not there is an error here rather than at the first write. Nowhere else.
 pub fn payload_path(dir: &Path, name: &str) -> Result<PathBuf> {
     // Naming the directory, because the bare `canonicalize` error does not.
     // `slipcase unpack --dest nowhere` reported *The system cannot find the

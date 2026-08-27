@@ -140,8 +140,9 @@ fn main() -> Result<(), slpc::Error> {
 ```
 
 Off by default, and separate from `fs`: a caller writing containers has no use
-for it, and one unpacking only their own does not need it either. It adds one
-crate on Unix and none on Windows.
+for it, and one unpacking only their own does not need it either. On Windows it
+adds nothing at all. On Unix it adds one crate on top of `fs`, or four without
+it, `fs` already carrying most of what `xattr` needs.
 
 ## Validating
 

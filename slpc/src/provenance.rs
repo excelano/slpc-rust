@@ -32,18 +32,16 @@
 //! itself — succeeds. So the rule for a caller about to hand a payload to the
 //! system is the whole of the rule: an error means do not open it.
 //!
-//! That is deliberately a test of the copy rather than of this module's own
-//! success. What is called laundering above is a payload reaching its handler
-//! looking like something this machine made, and the warning that then never
-//! appears; it is not the absence of one particular value. A copy the platform
-//! marked is gated, so the harm does not arise, and the source's own value —
-//! which agent, which download — is detail this module loses rather than a
-//! control it gives up. Testing the file rather than the environment is also
-//! why nothing here asks whether it is sandboxed.
+//! That is a test of the copy rather than of the write's own success: a copy the
+//! platform marked is gated whoever marked it, so the harm does not arise, and
+//! the source's own value is detail lost rather than a control given up. Asking
+//! the file rather than the environment is why no arm here asks whether it is
+//! sandboxed.
 //!
-//! Requires the `provenance` feature, which is off by default. It adds one
-//! crate to the tree on Unix and none on Windows, where a stream is reached
-//! through `std::fs`.
+//! Requires the `provenance` feature, which is off by default. It adds nothing
+//! at all on Windows, where a stream is reached through `std::fs`, and on Unix
+//! one crate on top of `fs` or four without it — `fs` already carries most of
+//! what `xattr` needs.
 
 use std::path::Path;
 

@@ -23,9 +23,12 @@ fs = ["dep:tempfile"]
 # part of it: a caller writing containers has no use for it, and a caller who
 # only ever unpacks containers they made does not need it either. It adds
 # `xattr` on Unix and nothing at all on Windows, where an alternate data stream
-# is reached through `std::fs` — and `xattr`'s own tree is `rustix`, `bitflags`
-# and `linux-raw-sys`, all three of which `fs` already brings through
-# `tempfile`. So it is one crate on the platforms that need one.
+# is reached through `std::fs`. What that costs depends on what else is on, and
+# counting only the good case would be the kind of claim this repository does
+# not make: measured on 2026-08-26, one crate on top of `fs`, which already
+# brings `xattr`'s own tree of `rustix`, `bitflags` and `linux-raw-sys` through
+# `tempfile` — and four on its own, since `provenance` does not imply `fs` and a
+# caller may well want it without one.
 provenance = ["dep:xattr"]
 
 [dependencies]
