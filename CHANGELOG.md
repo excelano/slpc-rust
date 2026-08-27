@@ -11,6 +11,13 @@ the commit history are the record for those.
 
 ## [0.3.7] - 2026-08-27
 
+### Added
+
+- **`Limits::DEFAULT`**, the defaults as a constant. `Default::default` is not
+  `const` and the struct is `#[non_exhaustive]`, so without it a caller outside
+  this crate cannot say *the defaults, with this one changed* in a `const` —
+  which is where a caller with a considered bound wants to put it.
+
 ### Security
 
 - **Rewriting a container in place no longer launders it.** `Destination::in_place`
@@ -39,6 +46,22 @@ the commit history are the record for those.
   on it.
 
 ### Changed
+
+- **The default metadata bound is 1 MiB, down from the 16 MiB 0.3.6 shipped a
+  few hours earlier.** That number rested on an estimate — that a parsed
+  document costs *several times* its source — which was wrong by more than an
+  order of magnitude. Measured against the densest conformant shape, shortest
+  legal keys and shortest legal values: 256 KiB of metadata parses to 22 MB
+  resident and 1 MiB to 85 MB, about 85 times, because `toml_edit` keeps a key's
+  decor, span and representation so that a rewrite can put back what it did not
+  touch. 16 MiB was therefore about 1.4 GB parsed, and several times that again
+  in anything that renders the document.
+
+  The multiplier follows key count rather than size, so the number is chosen
+  against the dense shape. 1 MiB costs 85 MB at worst and is generous against
+  every legitimate document: the format defines two keys, SPEC §2.2's example is
+  four lines, and the largest metadata member in the conformance corpus is
+  64 KiB.
 
 - **`fs` implies `provenance`.** Not convenience: without the carry above,
   enabling `fs` in order to replace containers is enabling a laundering bug, and

@@ -43,27 +43,62 @@ pub struct Limits {
 }
 
 impl Limits {
-    /// The default bound on the metadata member: 16 MiB.
+    /// The default bound on the metadata member: 1 MiB.
     ///
-    /// Chosen against both ends of what SPEC 2.2 permits. The two keys the
-    /// format defines occupy a few dozen bytes, and a document holding what
-    /// §2.2 also permits — an extracted text layer, an embedded thumbnail, a
-    /// provenance chain — can plausibly reach a megabyte or two, so a bound
-    /// near that would refuse legitimate containers. At the other end this is
-    /// what a hostile container can make a reader allocate, and 16 MiB of TOML
-    /// costs a parsed document several times that, which is survivable on
-    /// anything this crate is likely to run on.
+    /// **This is a bound on the member, and the member is not what costs.** A
+    /// parsed document costs far more than the bytes it came from, because
+    /// `toml_edit` keeps a key's decor, span and representation alongside its
+    /// value so that a rewrite can put back what it did not touch. Measured on
+    /// 2026-08-27 against the densest conformant shape — shortest legal keys,
+    /// shortest legal values — 256 KiB of metadata parses to 22 MB resident and
+    /// 1 MiB to 85 MB. Around 85 times, and the multiplier is a function of how
+    /// many keys fit rather than of the size, so the dense shape is the one to
+    /// choose the number against.
     ///
-    /// It is a default and not a recommendation. A reader invoked
-    /// automatically over a directory should set it far lower; one being
-    /// handed a single file by somebody who chose it can afford more.
-    pub const DEFAULT_METADATA_BYTES: u64 = 16 << 20;
+    /// 16 MiB was this constant for one afternoon, on the estimate that a
+    /// parsed document costs *several times* its source. That was wrong by
+    /// more than an order of magnitude: 16 MiB is about 1.4 GB parsed, and in
+    /// a viewer that renders the document it is several times that again.
+    ///
+    /// 1 MiB against the other end. The format defines two keys and SPEC 2.2's
+    /// example is four lines; a document carrying what §2.2 also permits — an
+    /// extracted text layer, an embedded thumbnail — reaches tens or hundreds
+    /// of kilobytes rather than megabytes, and the largest container in the
+    /// conformance corpus holds 64 KiB of metadata. A megabyte is generous
+    /// against every legitimate document anyone has produced and costs 85 MB
+    /// against the worst one anyone can write.
+    ///
+    /// It is a default and not a recommendation, which is what [`Limits`] is
+    /// for. Anything that also renders the document should set it lower —
+    /// `slipcase-desktop` uses 256 KiB, having measured what a tree of that
+    /// many rows costs — and a reader invoked automatically over a directory
+    /// lower still.
+    pub const DEFAULT_METADATA_BYTES: u64 = 1 << 20;
+}
+
+impl Limits {
+    /// Every bound at its default, as a constant.
+    ///
+    /// [`Default::default`] is not `const`, and the struct is
+    /// `#[non_exhaustive]` so a caller outside this crate cannot write the
+    /// literal. Without this there is no way to say *the defaults, with this one
+    /// changed* in a `const`, which is where a caller with a considered bound
+    /// wants to put it.
+    ///
+    /// ```
+    /// const LIMITS: slpc::Limits = {
+    ///     let mut l = slpc::Limits::DEFAULT;
+    ///     l.metadata_bytes = 256 << 10;
+    ///     l
+    /// };
+    /// ```
+    pub const DEFAULT: Self = Self {
+        metadata_bytes: Self::DEFAULT_METADATA_BYTES,
+    };
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self {
-            metadata_bytes: Self::DEFAULT_METADATA_BYTES,
-        }
+        Self::DEFAULT
     }
 }
