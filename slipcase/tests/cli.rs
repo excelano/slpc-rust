@@ -765,3 +765,74 @@ fn info_redirected_is_the_member_and_not_a_rendering() {
         "report\u{202E}fdp.exe"
     );
 }
+
+/// A failed `--metadata` leaves the payload nowhere, not on disk and unmarked.
+///
+/// **The defect this catches wrote a file while reporting that it had not.**
+/// Both destinations are reserved before either is written and the code took
+/// that for the guarantee; it is the check. `Destination::new` asks whether the
+/// path exists and a dangling symbolic link answers no, so the refusal arrives
+/// at the no-clobber rename — which used to be after the payload had been
+/// committed and before its provenance was carried. One planted link in a
+/// directory somebody unpacks into left them a payload the tool said it had not
+/// written, carrying nothing about where it came from.
+///
+/// Swap the two commits back and this fails on the second assertion.
+#[test]
+#[cfg(unix)]
+fn a_refused_metadata_write_leaves_no_payload_behind() {
+    let s = Sandbox::new();
+    s.file("report.pdf", b"the payload\n");
+    assert_eq!(code(&s.run(&["pack", "report.pdf"])), 0);
+    std::fs::create_dir(s.path().join("dest")).unwrap();
+    std::os::unix::fs::symlink(
+        "/nonexistent/nowhere",
+        s.path().join("dest").join("slipcase.metadata.toml"),
+    )
+    .unwrap();
+
+    let o = s.run(&["unpack", "report.pdf.slpc", "--dest", "dest", "--metadata"]);
+    assert_ne!(code(&o), 0, "it reports failure: {}", out(&o));
+    assert!(
+        !s.path().join("dest").join("report.pdf").exists(),
+        "the payload was written by a command that said it failed"
+    );
+}
+
+/// `-o -` is standard output and not a file to put a mark on.
+///
+/// Catches the guard that checks `-` on the input and forgets the output, which
+/// is how this shipped in 0.3.7. The container goes to standard output and the
+/// provenance carry was handed `Path::new("-")`, so the mark meant for the new
+/// container landed on a real file of that name in the working directory — and
+/// on Windows, where the mark is an alternate data stream reached through
+/// `std::fs`, it would have created one.
+#[test]
+#[cfg(unix)]
+fn repack_to_standard_output_marks_no_file_called_dash() {
+    let s = Sandbox::new();
+    s.file("report.pdf", b"the payload\n");
+    assert_eq!(code(&s.run(&["pack", "report.pdf"])), 0);
+    if !mark_as_downloaded(&s.path().join("report.pdf.slpc")) {
+        eprintln!("skipped: this filesystem will not hold a mark");
+        return;
+    }
+    let innocent = s.file("-", b"a file that happens to be called that\n");
+
+    s.file(
+        "m.toml",
+        b"slipcase_version = \"1.0\"\n\n[payload]\nfile = \"report.pdf\"\n\nt = \"x\"\n",
+    );
+    let o = s.run(&["repack", "report.pdf.slpc", "--meta", "m.toml", "-o", "-"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+
+    assert!(
+        !slpc::provenance::arrived_from_elsewhere(&innocent),
+        "a file named `-` was marked"
+    );
+    assert_eq!(
+        std::fs::read(&innocent).unwrap(),
+        b"a file that happens to be called that\n",
+        "and it was not written to either"
+    );
+}

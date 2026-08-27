@@ -967,3 +967,62 @@ fn a_multi_disk_archive_is_refused() {
         assert!(verdict.to_string().contains("single-disk"), "{verdict}");
     }
 }
+
+/// The Zip64 record is consulted on the same signal the ZIP crate uses.
+///
+/// **The third way to split this crate's two directory readers, and the one the
+/// other tests here do not reach.** The ZIP crate goes looking for a Zip64 end
+/// of central directory record when *any* of the plain record's three fields is
+/// saturated, the directory size included; this crate looked at only the count
+/// and the offset. So a plain record that is complete, consistent, and merely
+/// understates the entry count — with the size field carrying the only sentinel
+/// — sent the two readers to different records, and the member visible to just
+/// one of them was a duplicate payload.
+///
+/// Change the gate back to `count || offset` and this reports conformant.
+#[test]
+fn the_zip64_record_is_consulted_on_the_size_sentinel() {
+    let plain = duplicate_payload_archive();
+    let at = eocd_at(&plain);
+    let count = u16::from_le_bytes(plain[at + 10..at + 12].try_into().unwrap());
+    let size = u32::from_le_bytes(plain[at + 12..at + 16].try_into().unwrap());
+    let offset = u32::from_le_bytes(plain[at + 16..at + 20].try_into().unwrap());
+
+    // Everything up to the plain record, then a Zip64 record holding the truth,
+    // its locator, and a plain record that understates the count and marks
+    // itself Zip64 with the size field alone.
+    let mut bytes = plain[..at].to_vec();
+    let z64_at = bytes.len() as u64;
+
+    bytes.extend_from_slice(&0x0606_4B50u32.to_le_bytes());
+    bytes.extend_from_slice(&44u64.to_le_bytes()); // the rest of this record
+    bytes.extend_from_slice(&0x031Eu16.to_le_bytes());
+    bytes.extend_from_slice(&45u16.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // this disk
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // disk with the directory
+    bytes.extend_from_slice(&u64::from(count).to_le_bytes()); // entries here
+    bytes.extend_from_slice(&u64::from(count).to_le_bytes()); // entries in total
+    bytes.extend_from_slice(&u64::from(size).to_le_bytes());
+    bytes.extend_from_slice(&u64::from(offset).to_le_bytes());
+
+    bytes.extend_from_slice(&0x0706_4B50u32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&z64_at.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+
+    bytes.extend_from_slice(&0x0605_4B50u32.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&(count - 1).to_le_bytes()); // one short, on purpose
+    bytes.extend_from_slice(&(count - 1).to_le_bytes());
+    bytes.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // the only sentinel
+    bytes.extend_from_slice(&offset.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+
+    let verdict = slpc::validate(std::io::Cursor::new(bytes)).unwrap();
+    assert!(!verdict.is_conformant(), "{verdict}");
+    assert!(
+        verdict.to_string().contains("report.pdf"),
+        "the duplicate the Zip64 record holds should be what is reported: {verdict}"
+    );
+}
