@@ -10,7 +10,7 @@ use toml_edit::DocumentMut;
 use zip::ZipArchive;
 
 use crate::error::{EntryKind, Error, Malformed, Result, Unsupported};
-use crate::{central, metadata, name, METADATA_MEMBER, VERSION};
+use crate::{central, metadata, name, Limits, METADATA_MEMBER, VERSION};
 
 /// One member of the central directory, as far as this library cares.
 ///
@@ -94,7 +94,7 @@ pub(crate) enum Located {
 /// Two members can carry one byte string and decode differently only when their
 /// flag bits differ over non-ASCII bytes; over ASCII both branches agree, which
 /// would make them duplicates and stop this before it began.
-pub(crate) fn locate(entries: &[Entry], names: &[central::RawName], want: &str) -> Located {
+pub(crate) fn locate(entries: &[Entry], names: &[central::Recorded], want: &str) -> Located {
     let mut matched = names.iter().filter(|n| n.decodes_to(want));
     let Some(first) = matched.next() else {
         return Located::None;
@@ -121,7 +121,7 @@ pub struct Container<R> {
     /// Every central directory name, duplicates included, for the counting the
     /// ZIP crate cannot do. Kept so a rewrite can check the metadata it is
     /// about to write against the same archive.
-    pub(crate) names: Vec<central::RawName>,
+    pub(crate) names: Vec<central::Recorded>,
     pub(crate) metadata_index: usize,
     doc: DocumentMut,
     bytes: Vec<u8>,
@@ -140,6 +140,13 @@ impl Container<std::fs::File> {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::read(std::fs::File::open(path)?)
     }
+
+    /// Open a container from a path, under bounds of the caller's choosing.
+    ///
+    /// [`Container::open`] with [`Limits::default`].
+    pub fn open_with<P: AsRef<Path>>(path: P, limits: Limits) -> Result<Self> {
+        Self::read_with(std::fs::File::open(path)?, limits)
+    }
 }
 
 impl<R: Read + Seek> Container<R> {
@@ -148,7 +155,20 @@ impl<R: Read + Seek> Container<R> {
     /// Reads the central directory and the metadata member, and nothing else.
     /// The payload is not decompressed and not read, so a container whose
     /// payload uses a compression method this build lacks still opens.
-    pub fn read(mut reader: R) -> Result<Self> {
+    pub fn read(reader: R) -> Result<Self> {
+        Self::read_with(reader, Limits::default())
+    }
+
+    /// Read a container, spending no more on the metadata member than `limits`
+    /// allows.
+    ///
+    /// SPEC 6: identifying a container means decompressing and parsing that
+    /// member, so a reader commits the memory before it knows whether the file
+    /// was a container. A member over the bound is
+    /// [`Unsupported::MetadataTooLarge`], which is
+    /// [`Undetermined`](crate::Verdict::Undetermined) and not a verdict against
+    /// the file.
+    pub fn read_with(mut reader: R, limits: Limits) -> Result<Self> {
         // Count names before the archive is built, because `ZipArchive` keys
         // its directory by name and two members sharing one arrive as a single
         // entry. SPEC 2.1 requires exactly one of each named member, which is
@@ -167,10 +187,11 @@ impl<R: Read + Seek> Container<R> {
         };
 
         // Buffering here is deliberate and is not the rule the payload lives
-        // under: the metadata member is a small TOML document, and every
-        // caller of this library wants all of it.
-        let mut bytes = Vec::new();
-        archive.by_index(meta_index)?.read_to_end(&mut bytes)?;
+        // under: every caller of this library wants all of this member. What it
+        // is not is small, which this said until it was measured — see
+        // `read_metadata_member`.
+        let bytes =
+            read_metadata_member(&mut archive, meta_index, entries[meta_index].size, limits)?;
 
         let (doc, keys) = metadata::parse(&bytes)?;
         let crate::metadata::Keys {
@@ -269,6 +290,66 @@ impl<R: Read + Seek> Container<R> {
         Ok(self.entries[i].size)
     }
 
+    /// The permission bits the archive records for the payload, where it
+    /// records any.
+    ///
+    /// `Ok(None)` where the container says nothing, which is the common case:
+    /// an archive written on a system with no notion of a Unix mode records no
+    /// high bits, and a reader has no business inventing some. The ZIP crate's
+    /// own `unix_mode` does invent them — `S_IFREG | 0o664` for a DOS archive,
+    /// `0o444` where the read-only bit is set — so this reads the external
+    /// attributes off the central directory instead and answers only when the
+    /// high sixteen bits carry something.
+    ///
+    /// The file-type bits are masked off; [`EntryKind`] is where those are
+    /// answered, and SPEC 3 already limits a payload to a regular file entry.
+    /// What comes back is the permission bits alone, `0o7777` at the widest.
+    ///
+    /// **This is for saying, not for applying.** SPEC 3 requires that an
+    /// extracted payload get the permissions a newly created file would
+    /// ordinarily receive, and forbids applying what the archive recorded: a
+    /// conformant container may record setuid, and honouring it would put a
+    /// setuid file on disk. [`Destination`](crate::Destination) is where the
+    /// writing side of that lives, and it never consults this. What this is
+    /// for is telling somebody what they are holding — that a payload was
+    /// executable where it came from, and that the copy they are about to get
+    /// will not be.
+    ///
+    /// ```no_run
+    /// # fn main() -> slpc::Result<()> {
+    /// let c = slpc::Container::open("build.sh.slpc")?;
+    /// if c.payload_mode()?.is_some_and(|m| m & 0o111 != 0) {
+    ///     println!("the payload is an executable file");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Unsupported::Version`] where the container declares a version this
+    /// build does not implement, since its payload was never located. Same
+    /// refusal, and for the same reason, as [`Container::payload_size`].
+    pub fn payload_mode(&self) -> Result<Option<u32>> {
+        let i = self
+            .payload_index
+            .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
+        // Matched on the raw name rather than by index. The two vectors are the
+        // same directory, but the ZIP crate keys its own by name and collapses
+        // duplicates, so the indices agree only in the absence of one — and
+        // uniqueness having been established is exactly what a payload index
+        // means, so the match is unambiguous here and would not be anywhere
+        // that ran earlier.
+        let raw = &self.entries[i].raw;
+        let attributes = self
+            .names
+            .iter()
+            .find(|n| n.bytes == *raw)
+            .map_or(0, |n| n.external_attributes);
+        let mode = attributes >> 16;
+        Ok((mode != 0).then_some(mode & 0o7777))
+    }
+
     /// Whether this build can decode the payload, and what stops it when it
     /// cannot.
     ///
@@ -348,7 +429,16 @@ impl<R: Read + Seek> Container<R> {
 /// says nothing about whether the container conforms. Ask
 /// [`validate`](crate::validate) for that, which is the only function here that
 /// answers the question SPEC 3 constrains.
-pub fn metadata_of<R: Read + Seek>(mut reader: R) -> Result<DocumentMut> {
+pub fn metadata_of<R: Read + Seek>(reader: R) -> Result<DocumentMut> {
+    metadata_of_with(reader, Limits::default())
+}
+
+/// The metadata document alone, under bounds of the caller's choosing.
+///
+/// [`metadata_of`] with [`Limits::default`]. It reaches the same member by the
+/// same route and is exposed to the same thing, so a caller that bounds one
+/// and not the other has bounded nothing.
+pub fn metadata_of_with<R: Read + Seek>(mut reader: R, limits: Limits) -> Result<DocumentMut> {
     let names = central::names(&mut reader)?;
     reader.rewind()?;
 
@@ -361,15 +451,48 @@ pub fn metadata_of<R: Read + Seek>(mut reader: R) -> Result<DocumentMut> {
         Located::Several(n) => return Err(Malformed::DuplicateMetadataMember(n).into()),
     };
 
-    let mut bytes = Vec::new();
-    archive.by_index(i)?.read_to_end(&mut bytes)?;
+    let bytes = read_metadata_member(&mut archive, i, entries[i].size, limits)?;
     metadata::document(&bytes)
+}
+
+/// Decompress the metadata member, stopping at the bound SPEC 6 requires.
+///
+/// The recorded size is read first because it refuses the ordinary hostile case
+/// without inflating a byte. It is not the guarantee: measured against
+/// `zip` 8.6, a central directory rewritten to declare 100 bytes for a member
+/// that inflates to 209,715,259 still inflated in full and still cost 621 MB
+/// resident. Nothing in ZIP checks the two against each other, so the bound has
+/// to be applied to the bytes as they arrive, and the recorded size is worth
+/// exactly one cheap refusal.
+///
+/// `limit + 1` so that reaching the bound is a refusal rather than a silent
+/// truncation: a document cut off at the limit would parse to something the
+/// container does not say.
+fn read_metadata_member<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    index: usize,
+    declared: u64,
+    limits: Limits,
+) -> Result<Vec<u8>> {
+    let limit = limits.metadata_bytes;
+    let too_large = || Unsupported::MetadataTooLarge { limit, declared };
+    if declared > limit {
+        return Err(too_large().into());
+    }
+
+    let mut bytes = Vec::new();
+    let mut member = archive.by_index(index)?;
+    member.by_ref().take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(too_large().into());
+    }
+    Ok(bytes)
 }
 
 /// Find the member `payload.file` names, and check it may be a payload.
 pub(crate) fn locate_payload(
     entries: &[Entry],
-    names: &[central::RawName],
+    names: &[central::Recorded],
     payload_file: &str,
 ) -> Result<usize> {
     name::check_payload_name(payload_file)?;

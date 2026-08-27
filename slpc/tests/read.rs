@@ -711,3 +711,162 @@ fn refuses_what_spec_2_2_requires_of_the_member_itself() {
         Err(Error::Malformed(Malformed::MetadataNotUtf8))
     ));
 }
+
+// ---------------------------------------------------------------------------
+// SPEC 6: what a reader spends before it knows what it is holding
+// ---------------------------------------------------------------------------
+
+/// A metadata member over the bound is undetermined, not non-conformant.
+///
+/// Catches a reader that answers `NonConformant` when it runs out of its own
+/// allowance. The bound belongs to the reader, so answering that would publish
+/// this build's configuration as a property of somebody else's file, and two
+/// readers with different bounds would disagree about conformance — which is
+/// the disagreement SPEC 3 exists to prevent.
+#[test]
+fn a_metadata_member_over_the_bound_is_undetermined() {
+    let bytes = container("report.pdf", b"payload\n");
+    let mut limits = slpc::Limits::default();
+    limits.metadata_bytes = 8;
+
+    match slpc::validate_with(std::io::Cursor::new(bytes.clone()), limits) {
+        Ok(slpc::Verdict::Undetermined(Unsupported::MetadataTooLarge { limit, .. })) => {
+            assert_eq!(limit, 8);
+        }
+        other => panic!("expected undetermined over the bound, got {other:?}"),
+    }
+
+    // And the same container under a bound that fits is conformant, so the
+    // test above is about the bound rather than about the fixture.
+    assert!(slpc::validate(std::io::Cursor::new(bytes))
+        .unwrap()
+        .is_conformant());
+}
+
+/// The bound is applied to the bytes, not to the size the directory recorded.
+///
+/// Catches the obvious implementation of SPEC 6, which is to read the recorded
+/// uncompressed size and refuse on that alone. Measured against `zip` 8.6: a
+/// central directory rewritten to declare a hundred bytes for a member that
+/// inflates to two hundred megabytes is not checked by anything, and the member
+/// still arrives in full. Here the directory understates the member and the
+/// only thing standing between the reader and the whole of it is the bound on
+/// the read itself.
+#[test]
+fn a_lying_recorded_size_does_not_get_past_the_bound() {
+    let mut bytes = container("report.pdf", b"payload\n");
+    let member = metadata("report.pdf");
+
+    // Rewrite the central directory's uncompressed size for the metadata
+    // member to 1, which is under any bound worth setting.
+    let at = find_central_size_field(&bytes, slpc::METADATA_MEMBER);
+    bytes[at..at + 4].copy_from_slice(&1u32.to_le_bytes());
+
+    let mut limits = slpc::Limits::default();
+    limits.metadata_bytes = (member.len() - 1) as u64;
+
+    match slpc::validate_with(std::io::Cursor::new(bytes), limits) {
+        Ok(slpc::Verdict::Undetermined(Unsupported::MetadataTooLarge { declared, .. })) => {
+            assert_eq!(declared, 1, "the recorded size is reported as recorded");
+        }
+        other => panic!("expected the read to stop at the bound, got {other:?}"),
+    }
+}
+
+/// `metadata_of` is bounded too.
+///
+/// Catches bounding one entry point and not the other. Both reach the same
+/// member by the same route and are exposed to the same thing, so a caller who
+/// bounded `Container::read` and then called `metadata_of` would have bounded
+/// nothing. The desktop viewer calls this one.
+#[test]
+fn metadata_of_is_bounded_as_well() {
+    let bytes = container("report.pdf", b"payload\n");
+    let mut limits = slpc::Limits::default();
+    limits.metadata_bytes = 8;
+    assert!(matches!(
+        slpc::metadata_of_with(std::io::Cursor::new(bytes), limits),
+        Err(Error::Unsupported(Unsupported::MetadataTooLarge { .. }))
+    ));
+}
+
+/// Where the metadata member's recorded uncompressed size sits in the archive.
+fn find_central_size_field(bytes: &[u8], name: &str) -> usize {
+    let eocd = bytes
+        .windows(4)
+        .rposition(|w| w == 0x0605_4B50u32.to_le_bytes())
+        .expect("an end of central directory record");
+    let mut at = u32::from_le_bytes(bytes[eocd + 16..eocd + 20].try_into().unwrap()) as usize;
+    loop {
+        assert_eq!(
+            bytes[at..at + 4],
+            0x0201_4B50u32.to_le_bytes(),
+            "walked off the central directory without finding {name}"
+        );
+        let n = u16::from_le_bytes(bytes[at + 28..at + 30].try_into().unwrap()) as usize;
+        let e = u16::from_le_bytes(bytes[at + 30..at + 32].try_into().unwrap()) as usize;
+        let c = u16::from_le_bytes(bytes[at + 32..at + 34].try_into().unwrap()) as usize;
+        if &bytes[at + 46..at + 46 + n] == name.as_bytes() {
+            return at + 24;
+        }
+        at += 46 + n + e + c;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The mode the archive recorded, for saying and not for applying
+// ---------------------------------------------------------------------------
+
+/// A recorded mode comes back, with the file-type bits masked off.
+///
+/// Catches an accessor that hands back the whole mode. A caller asking whether
+/// a payload was executable tests `& 0o111`, and `0o100_755 & 0o111` and
+/// `0o755 & 0o111` agree — but a caller printing the answer, or comparing it to
+/// a mode of its own, would see `0o100755` and be wrong about what it means.
+#[test]
+fn a_recorded_mode_comes_back_without_its_file_type_bits() {
+    let bytes = raw_zip(&[
+        Member::new(slpc::METADATA_MEMBER, metadata("build.sh").as_bytes()),
+        Member::new("build.sh", b"#!/bin/sh\n").with_mode(0o100_755),
+    ]);
+    assert_eq!(open(&bytes).unwrap().payload_mode().unwrap(), Some(0o755));
+}
+
+/// A setuid payload is reported as setuid and not swallowed.
+///
+/// Catches masking to `0o777` rather than `0o7777`. SPEC 2.5 lets a container
+/// record this and SPEC 3 forbids applying it, and the whole value of the
+/// accessor is that something can say so.
+#[test]
+fn a_setuid_payload_is_reported() {
+    let bytes = raw_zip(&[
+        Member::new(slpc::METADATA_MEMBER, metadata("tool").as_bytes()),
+        Member::new("tool", b"\x7fELF\n").with_mode(0o104_755),
+    ]);
+    assert_eq!(open(&bytes).unwrap().payload_mode().unwrap(), Some(0o4755));
+}
+
+/// A container recording no mode says nothing, rather than saying 0o664.
+///
+/// This is the defect the accessor exists to avoid, and it is one the obvious
+/// implementation walks into. The ZIP crate's `unix_mode` invents a mode for an
+/// archive made on DOS — `S_IFREG | 0o664`, or `0o444` where the read-only bit
+/// is set — because for its purposes a guess beats nothing. Here a guess is
+/// worse than nothing: a card saying *the extracted copy will not be
+/// executable* about a container that never said whether it was is a sentence
+/// nobody can check, and every container written by a Windows tool would get
+/// one.
+#[test]
+fn a_container_recording_no_mode_says_nothing() {
+    let bytes = raw_zip(&[
+        Member::new(slpc::METADATA_MEMBER, metadata("report.pdf").as_bytes()).dos_made(),
+        Member::new("report.pdf", b"%PDF\n").dos_made(),
+    ]);
+    assert_eq!(open(&bytes).unwrap().payload_mode().unwrap(), None);
+
+    // The container still opens, which is the other half: SPEC 2.3 requires a
+    // regular file entry, and `EntryKind` answers that one by defaulting to
+    // regular where the archive is silent. Only the permissions are unknowable,
+    // and only they go quiet.
+    assert_eq!(open(&bytes).unwrap().payload_name(), "report.pdf");
+}

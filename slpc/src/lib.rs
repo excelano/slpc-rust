@@ -14,6 +14,7 @@ mod container;
 #[cfg(feature = "fs")]
 mod dest;
 mod error;
+mod limits;
 mod metadata;
 mod name;
 #[cfg(feature = "provenance")]
@@ -27,11 +28,12 @@ mod write;
 /// from a dependency of their own is what stops the two from skewing.
 pub use toml_edit;
 
-pub use container::{metadata_of, Container};
+pub use container::{metadata_of, metadata_of_with, Container};
 #[cfg(feature = "fs")]
 pub use dest::{display_path, payload_path, Destination};
 pub use error::{EntryKind, Error, Malformed, NameError, Result, Unsupported};
-pub use name::check_payload_name;
+pub use limits::Limits;
+pub use name::{check_payload_name, display_name};
 pub use write::{pack_file, pack_reader, rewrite_metadata, rewrite_metadata_bytes, Repack};
 
 /// The archive member holding the metadata (SPEC 2.1).
@@ -104,7 +106,22 @@ impl std::fmt::Display for Verdict {
 /// bytes at all is a fact about the reader rather than about the container.
 /// Everything the container itself can be is a [`Verdict`].
 pub fn validate<R: std::io::Read + std::io::Seek>(reader: R) -> Result<Verdict> {
-    match Container::read(reader) {
+    validate_with(reader, Limits::default())
+}
+
+/// Report what can be said about a byte stream, under bounds of the caller's
+/// choosing.
+///
+/// [`validate`] with [`Limits::default`]. A container whose metadata member
+/// exceeds the bound is [`Verdict::Undetermined`] and never
+/// [`Verdict::NonConformant`], which is SPEC 6: the bound belongs to this
+/// reader, so answering non-conformant would publish one reader's configuration
+/// as a property of somebody else's file.
+pub fn validate_with<R: std::io::Read + std::io::Seek>(
+    reader: R,
+    limits: Limits,
+) -> Result<Verdict> {
+    match Container::read_with(reader, limits) {
         Ok(c) if c.version() == VERSION => Ok(Verdict::Conformant),
         Ok(c) => Ok(Verdict::OutOfScope(c.version().to_owned())),
         Err(Error::Malformed(m)) => Ok(Verdict::NonConformant(m)),

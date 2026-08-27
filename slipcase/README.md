@@ -59,7 +59,7 @@ Intel and ARM, each with a `.sha256` beside it.
 <!-- shared:verbs -->
 ```
 slipcase pack report.pdf --meta owner.toml       # writes report.pdf.slpc
-slipcase info report.pdf.slpc                    # prints the metadata, verbatim
+slipcase info report.pdf.slpc                    # prints the metadata; verbatim when redirected
 slipcase repack report.pdf.slpc --meta new.toml  # changes it in place, keeping the rest
 slipcase validate report.pdf.slpc                # exit 0 if conformant
 slipcase unpack report.pdf.slpc --dest ./out     # writes the payload and nothing else

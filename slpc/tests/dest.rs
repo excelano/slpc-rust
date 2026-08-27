@@ -371,3 +371,92 @@ fn a_refusal_names_the_file_the_way_a_person_wrote_it() {
         "the refusal does not name the file: {said}"
     );
 }
+
+/// A file appearing after the destination was reserved is still not replaced.
+///
+/// Catches the version of SPEC 3's overwrite rule that everyone writes first: a
+/// `path.exists()` before the write. That is a stat-then-write, and two
+/// processes pass it together. The guarantee has to be the creation itself, and
+/// here `Destination::new` succeeds against an empty directory and the file
+/// arrives before `commit` — which is the race, stood still.
+#[test]
+fn a_file_that_arrives_after_the_check_is_still_not_replaced() {
+    let s = sandbox();
+    let path = s.path().join("c.slpc");
+
+    let mut d = Destination::new(&path, false).unwrap();
+    d.writer().write_all(b"mine").unwrap();
+
+    // The window. Somebody else got there between the check and the rename.
+    std::fs::write(&path, b"theirs").unwrap();
+
+    let e = d.commit().unwrap_err();
+    assert!(
+        matches!(&e, Error::Io(io) if io.kind() == std::io::ErrorKind::AlreadyExists),
+        "{e}"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        b"theirs",
+        "the file that was there first is the one still there"
+    );
+}
+
+/// A setuid payload lands as an ordinary file, not as a setuid one.
+///
+/// SPEC 3 forbids applying the permission bits an archive records, and SPEC 2.5
+/// lets a conformant container record any of them — so a faithful extraction
+/// loop, which is what more than one language's documentation shows, puts a
+/// setuid file on disk from a container nobody could reject.
+///
+/// This library cannot do that, because the half that reads an archive and the
+/// half that writes a file never meet: `Container::payload` hands back a reader
+/// and `Destination` takes a path. The test is here to catch somebody wiring
+/// them together, which is a two-line change and a plausible one — the mode is
+/// right there in `payload_mode` now, and it reads like something extraction
+/// ought to honour.
+#[test]
+#[cfg(unix)]
+fn a_setuid_payload_does_not_extract_as_setuid() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let archive = support::raw_zip(&[
+        support::Member::new(slpc::METADATA_MEMBER, support::metadata("tool").as_bytes()),
+        support::Member::new("tool", b"\x7fELF payload\n").with_mode(0o104_755),
+    ]);
+
+    let s = sandbox();
+    let mut c = slpc::Container::read(std::io::Cursor::new(archive)).unwrap();
+    assert_eq!(
+        c.payload_mode().unwrap(),
+        Some(0o4755),
+        "the fixture records it"
+    );
+
+    // What `slipcase unpack` does, in the order it does it.
+    let out = s.path().join(c.payload_name());
+    let mut d = Destination::new(&out, false).unwrap();
+    std::io::copy(&mut c.payload().unwrap(), d.writer()).unwrap();
+    d.commit().unwrap();
+
+    let landed = std::fs::metadata(&out).unwrap().permissions().mode() & 0o7777;
+    assert_eq!(
+        landed & 0o4000,
+        0,
+        "setuid survived extraction: {landed:04o}"
+    );
+    assert_eq!(
+        landed & 0o111,
+        0,
+        "an execute bit survived extraction: {landed:04o}"
+    );
+
+    // And what it did get is what an ordinary new file beside it gets, rather
+    // than something this library decided on its own.
+    let ordinary = s.path().join("ordinary");
+    std::fs::write(&ordinary, b"").unwrap();
+    assert_eq!(
+        landed,
+        std::fs::metadata(&ordinary).unwrap().permissions().mode() & 0o7777
+    );
+}

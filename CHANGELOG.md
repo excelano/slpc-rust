@@ -9,6 +9,91 @@ minor bump below 1.0 is how a breaking change ships.
 This file begins at 0.3.0. Earlier releases carried no notes, and the tags and
 the commit history are the record for those.
 
+## [0.3.6] - 2026-08-27
+
+Everything here follows `excelano/slipcase`'s reader-side hardening of the same
+day, which added four requirements to SPEC §3 and a Security Considerations
+section as SPEC §6. Two of the four this library already satisfied and now
+proves it does; the other two are new work.
+
+### Security
+
+- **A hostile metadata member no longer costs whatever it likes.** Identifying a
+  container means decompressing the metadata member and parsing it as TOML, so a
+  reader spends the memory before it knows whether the file was a container at
+  all — which is not the position of a general ZIP consumer, who chooses what to
+  extract. Measured before the fix: a 204,151-byte container whose metadata
+  member deflates at a little over a thousand to one cost 620 MB resident here
+  and 1,020 MB in the desktop viewer, took 0.61 seconds, and was reported
+  conformant. At 1,019,488 bytes it was 5,019 MB and 5.1 seconds.
+
+  `Limits` bounds it, defaulting to 16 MiB, and the four entry points that read
+  a metadata member gained a `_with` twin that takes one: `Container::read_with`,
+  `Container::open_with`, `validate_with` and `metadata_of_with`. The same two
+  containers now cost 11 MB and 0.00 seconds. A container over the bound is
+  `Verdict::Undetermined`, never `NonConformant`, because the bound belongs to
+  the reader: answering non-conformant would publish this build's configuration
+  as a property of somebody else's file, and two readers with different bounds
+  would then disagree about conformance.
+
+  The size a central directory records is not the bound and cannot be. Measured
+  against `zip` 8.6: a directory rewritten to declare 100 bytes for that same
+  member still inflated the whole of it and still cost 621 MB, because nothing
+  in ZIP checks the two against each other. It is read first because it refuses
+  the ordinary case without spending anything, and the guarantee is the bound on
+  the bytes as they arrive.
+
+  The parse-depth half of SPEC §6 is `toml_edit`'s and is already met. Measured
+  across nested arrays, nested inline tables, dotted keys and table headers: it
+  accepts nesting to depth 80 and refuses 81, with an error naming a recursion
+  limit rather than a stack overflow.
+
+- **`display_name` escapes the Unicode bidirectional formatting characters.**
+  SPEC §2.3 permits them in `payload.file` and DESIGN says why — they are legal
+  on every filesystem and a writer may hold a file that genuinely has one — so
+  SPEC §3 puts the rule on the display, where the problem is. A payload called
+  `report<U+202E>fdp.exe` reads as `report.pdf` wherever the override is applied,
+  beside whatever offers to open it.
+
+  `slipcase validate` now names the payload through it. `slipcase info` splits
+  the way `ls` and `git` split: redirected into a file or a pipe it still
+  reproduces the member byte for byte, which is what a caller redirecting it
+  asked for, and onto a terminal it escapes — a terminal being the one place
+  these characters are applied, and an unterminated override running to the end
+  of the paragraph rather than the end of the value it sat in.
+
+### Added
+
+- **`Container::payload_mode`** — the permission bits the archive records for
+  the payload, where it records any, with the file-type bits masked off. For
+  saying and not for applying: SPEC §3 forbids putting an archive's recorded
+  mode on an extracted file, and this exists so that something can tell a person
+  a payload was executable where it came from and that their copy will not be.
+
+  `Ok(None)` where the container says nothing, which is the common case and the
+  reason this reads the external attributes off the central directory rather
+  than asking the ZIP crate. The crate's `unix_mode` invents a mode for an
+  archive made on DOS — `S_IFREG | 0o664`, or `0o444` where the read-only bit is
+  set — which for its purposes beats nothing and here would mean every container
+  written by a Windows tool got a confident answer to a question it never
+  answered.
+
+### Changed
+
+- `RawName` became `Recorded` internally, carrying the external attributes
+  alongside the name it was already reading from the same header. Not public.
+
+### Notes
+
+Two SPEC §3 requirements were already met and are now pinned by tests rather
+than by luck. Extraction refuses to replace an existing file through an atomic
+no-clobber rename rather than a check before the write, and the new test stands
+the race still: the file arrives after `Destination::new` returned and `commit`
+still refuses. Nothing applies an archive's permission bits, structurally —
+`Container::payload` hands back a reader and `Destination` takes a path, and the
+two never meet — and the new test would catch somebody wiring them together,
+which is a two-line change and more tempting now that `payload_mode` exists.
+
 ## [0.3.5] - 2026-08-26
 
 ### Security

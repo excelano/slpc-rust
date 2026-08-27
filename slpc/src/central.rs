@@ -23,14 +23,24 @@ const CENTRAL_HEADER: u32 = 0x0201_4B50;
 /// The ZIP comment is a 16-bit length, so the record starts no further back.
 const MAX_EOCD_SEARCH: u64 = 22 + u16::MAX as u64;
 
-/// One central directory entry, reduced to what naming needs.
-pub(crate) struct RawName {
+/// One central directory entry, reduced to what this crate reads off it.
+pub(crate) struct Recorded {
     /// General purpose bit 11: the name is UTF-8 when set, CP437 otherwise.
     pub utf8: bool,
     pub bytes: Vec<u8>,
+    /// The member's external attributes, exactly as recorded.
+    ///
+    /// Read here rather than through the ZIP crate because the crate's
+    /// `unix_mode` does not distinguish a mode a writer recorded from one it
+    /// invented: for an archive made on DOS with no high bits it returns
+    /// `S_IFREG | 0o664`, and for a read-only one `0o444`. Both are answers to
+    /// a question the container never answered, and
+    /// [`Container::payload_mode`](crate::Container::payload_mode) has to be
+    /// silent there rather than confident.
+    pub external_attributes: u32,
 }
 
-impl RawName {
+impl Recorded {
     /// Does this name decode to `want`, as SPEC 2.1 requires it be decoded?
     ///
     /// Comparison is exact over the decoded code points: case-sensitive, and no
@@ -88,7 +98,7 @@ fn cp437(b: u8) -> char {
 ///
 /// Reads names and the one flag bit that decodes them, and skips everything
 /// else. The reader is left wherever this finished with it; the caller rewinds.
-pub(crate) fn names<R: Read + Seek>(reader: &mut R) -> Result<Vec<RawName>> {
+pub(crate) fn names<R: Read + Seek>(reader: &mut R) -> Result<Vec<Recorded>> {
     let (count, offset) = directory_location(reader)?;
     reader.seek(SeekFrom::Start(offset))?;
 
@@ -103,6 +113,7 @@ pub(crate) fn names<R: Read + Seek>(reader: &mut R) -> Result<Vec<RawName>> {
             .into());
         }
         let flags = u16::from_le_bytes(header[8..10].try_into().unwrap());
+        let external_attributes = u32::from_le_bytes(header[38..42].try_into().unwrap());
         let name_len = u16::from_le_bytes(header[28..30].try_into().unwrap()) as usize;
         let extra_len = i64::from(u16::from_le_bytes(header[30..32].try_into().unwrap()));
         let comment_len = i64::from(u16::from_le_bytes(header[32..34].try_into().unwrap()));
@@ -111,9 +122,10 @@ pub(crate) fn names<R: Read + Seek>(reader: &mut R) -> Result<Vec<RawName>> {
         reader.read_exact(&mut bytes)?;
         reader.seek(SeekFrom::Current(extra_len + comment_len))?;
 
-        names.push(RawName {
+        names.push(Recorded {
             utf8: flags & (1 << 11) != 0,
             bytes,
+            external_attributes,
         });
     }
     Ok(names)
@@ -180,14 +192,16 @@ fn zip64<R: Read + Seek>(
 mod tests {
     use super::*;
 
-    fn utf8(bytes: &[u8]) -> RawName {
-        RawName {
+    fn utf8(bytes: &[u8]) -> Recorded {
+        Recorded {
+            external_attributes: 0,
             utf8: true,
             bytes: bytes.to_vec(),
         }
     }
-    fn cp437_named(bytes: &[u8]) -> RawName {
-        RawName {
+    fn cp437_named(bytes: &[u8]) -> Recorded {
+        Recorded {
+            external_attributes: 0,
             utf8: false,
             bytes: bytes.to_vec(),
         }

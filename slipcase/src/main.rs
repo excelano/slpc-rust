@@ -379,9 +379,32 @@ fn unpack(a: Unpack) -> Result<()> {
 /// actually holds, comments and key order included, and it goes into another
 /// TOML tool unchanged.
 fn info(path: &Path) -> Result<()> {
+    use std::io::IsTerminal as _;
+
     let c = Container::read(input::container(path)?)?;
-    std::io::stdout()
-        .write_all(c.metadata_bytes())
+    let bytes = c.metadata_bytes();
+    let mut out = std::io::stdout();
+
+    // One verb, two jobs, split where `ls` and `git` split them. Redirected
+    // into a file or a pipe this reproduces the member byte for byte, which is
+    // what a caller redirecting it asked for and what escaping would ruin.
+    // Onto a terminal it is a display, and SPEC 3 requires the bidirectional
+    // formatting characters be escaped rather than applied there — a terminal
+    // is the one place they are applied, an override running to the end of the
+    // paragraph rather than the end of the value it sat in.
+    //
+    // `from_utf8` cannot fail here: SPEC 2.2 requires the member be UTF-8 and
+    // `Container::read` parsed it as TOML before this was reached. The fallback
+    // is the raw bytes rather than an error, because refusing to print a
+    // document over its encoding would be this verb inventing a verdict.
+    if out.is_terminal() {
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            return out
+                .write_all(slpc::display_name(text).as_bytes())
+                .context("cannot write to standard output");
+        }
+    }
+    out.write_all(bytes)
         .context("cannot write to standard output")
 }
 
@@ -399,10 +422,14 @@ fn validate(path: &Path) -> Result<()> {
         Verdict::Conformant => {
             source.rewind().context("cannot re-read the container")?;
             let c = Container::read(source)?;
+            // Through `display_name`, because this line is read by somebody
+            // deciding what a container holds and a payload called
+            // `report<U+202E>fdp.exe` reads as `report.pdf` in every terminal
+            // that applies the override (SPEC 3).
             println!(
                 "conformant — slipcase {}, payload {}",
                 c.version(),
-                c.payload_name()
+                slpc::display_name(c.payload_name())
             );
             Ok(())
         }

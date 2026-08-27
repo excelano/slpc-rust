@@ -14,7 +14,7 @@ The latest 0.x release receives security fixes. Older versions are not supported
 
 slipcase is a CLI that runs locally on your machine, and `slpc` is the library behind it. Both read the file you point them at and write only where you tell them to. Neither makes a network call of any kind, has an auth layer, or implements any administrative operation. They can read and write only what your operating-system user already can.
 
-Two things are worth stating because they are the ones a container format could plausibly get wrong.
+A few things are worth stating because they are the ones a container format could plausibly get wrong.
 
 **Unpacking writes the payload and nothing else.** `payload.file` is a plain filename and never a path, which the specification states as a list of exclusions in its section 2.3 and this implementation checks in full before the name is used. A name breaking any of them is rejected rather than repaired, so a payload cannot be written outside the destination directory. The payload member must also be a regular file entry, so a symbolic link, a directory, or a device cannot be written in a payload's place. Members of the archive other than the payload and the metadata document are never written to disk, whatever they are named. `--metadata` adds one more file, `slipcase.metadata.toml`, in the same destination.
 
@@ -24,7 +24,11 @@ Two things are worth stating because they are the ones a container format could 
 
 **A payload is never executed, opened, or handed to another program.** The tool has no verb that runs anything. Nothing here inspects a payload's type or acts on it, and a container that names its payload `report.pdf` gets no different treatment from one that names it `setup.exe`.
 
-Resource limits when parsing ZIP or TOML belong to the libraries doing the parsing, `zip` and `toml_edit`, and apply equally to every other consumer of those crates. A container is an ordinary ZIP archive, and the usual cautions about archives from untrusted sources apply to it exactly as they do to any other.
+**Identifying a container is bounded, from 0.3.6, and this paragraph used to say it needed no bound.** It held that resource limits belong to `zip` and `toml_edit` and apply equally to every other consumer of those crates. That is true of the payload, which nothing inflates until you ask. It was never true of the metadata member: deciding whether a file is a container means decompressing that member and parsing it as TOML, so the memory is spent before anything about the file is known, which is not the position of a general ZIP consumer who chooses what to extract. Measured before the fix, a 204,151-byte container cost 620 MB of memory and was reported conformant. The metadata member is now bounded — 16 MiB by default, adjustable through `Limits` — and a container over the bound is reported as undetermined rather than as non-conformant, because the bound belongs to the reader and not to the file.
+
+**A payload name is escaped before it is shown to you.** The specification permits the Unicode bidirectional formatting characters in `payload.file`, because they are legal filenames everywhere and excluding them would make the name rules a table of special cases. A payload called `report<U+202E>fdp.exe` therefore reads as `report.pdf` in any terminal that applies the override. `slipcase validate` escapes it, and `slipcase info` escapes it when it is writing to a terminal — when it is redirected into a file or a pipe it still reproduces the metadata member byte for byte, since that is what a caller redirecting it asked for.
+
+Beyond those, a container is an ordinary ZIP archive, and the usual cautions about archives from untrusted sources apply to it exactly as they do to any other.
 
 ## What slipcase stores
 

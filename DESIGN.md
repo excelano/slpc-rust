@@ -241,6 +241,29 @@ A container downloaded from the internet is marked as such by the platform that 
 **What it does not reach.** A payload extracted somewhere with no room for the mark is the failure above and is reported. A filesystem that will not hold an extended attribute at all — `tmpfs` mounted `nouser_xattr`, a FAT volume — makes the tests announce a skip rather than pass quietly, because a run that proved nothing should not read like one that did.
 
 
+### 4.12 What a reader spends before it knows what it holds
+
+SPEC §6 requires a bound on the metadata member and names no number. This is where the number is chosen and where the reason a bound belongs to the library at all is written down.
+
+**Why it is not the ZIP library's problem, which is what this said until it was measured.** A general ZIP consumer chooses what to inflate, so a limit is between it and its own caller. A reader of this format does not choose: inflating the metadata member and parsing it as TOML *is* how it discovers whether the file was a container, so the memory is spent before anything about the file is known. Measured on 2026-08-27, before the fix: a 204,151-byte container whose metadata member deflates at a little over a thousand to one cost 620 MB resident here, 1,020 MB in `slipcase-desktop`, took 0.61 seconds, and came back conformant. At 1,019,488 bytes it was 5,019 MB and 5.1 seconds, and the desktop parses on the thread drawing the window.
+
+**16 MiB, and why not less.** The two keys the format defines occupy a few dozen bytes, so any bound at all is generous by that measure — and SPEC §2.2 permits any keys at any depth, which is the whole forward-compatibility story, so a document carrying an extracted text layer or an embedded thumbnail can reach a megabyte or two without doing anything wrong. A bound near that would refuse containers nobody would call hostile. At the other end, 16 MiB of TOML costs a parsed document several times that, which is survivable anywhere this crate is likely to run. It is a default rather than a recommendation, which is why `Limits` exists: a reader invoked automatically over a directory should set it far lower, and one handed a single file by somebody who chose it can afford more.
+
+**Undetermined and not non-conformant**, which SPEC §6 requires and is worth restating as a design constraint rather than a rule. The bound is this reader's, so exceeding it is a fact about the reader. `Verdict::NonConformant` would publish a configuration value as a property of somebody else's file, and two callers holding different `Limits` would disagree about conformance — the disagreement SPEC §3 exists to prevent. `Unsupported` already maps to `Undetermined`, so the new variant needed no plumbing.
+
+**The recorded size is not the bound.** The obvious implementation reads the uncompressed size out of the central directory and refuses on that alone. Measured against `zip` 8.6: a directory rewritten to declare 100 bytes for a member inflating to 209,715,259 is not checked by anything, and the member still arrived in full at 621 MB. So it is read first, because it refuses the ordinary hostile case without spending a byte, and the guarantee is `take(limit + 1)` on the read. One past the limit rather than at it, so that reaching the bound is a refusal and never a silent truncation — a document cut off at the limit would parse to something the container does not say.
+
+**The depth half is `toml_edit`'s and is already met**, which is worth recording so that nobody implements a second one. Measured across nested arrays, nested inline tables, dotted keys and table headers: it accepts nesting to depth 80 and refuses 81, and refuses with an error naming a recursion limit rather than by overflowing the stack. A stack overflow aborts the process and cannot be caught, so this was measured rather than assumed.
+
+### 4.13 A name is not safe because it is legal
+
+SPEC §2.3 excludes the C0 controls and U+007F from `payload.file` and lets everything else through, including the Unicode bidirectional formatting characters. That is deliberate on both sides: they are legal on every filesystem, a writer may hold a file that genuinely has one in its name, and putting them in the name rules would turn a rule about paths into a table of special cases. So the container is conformant and the problem is the display, which is why SPEC §3 states it as a display rule and why `display_name` is a rendering function rather than a check.
+
+**Escaping rather than isolating.** Wrapping the name in U+2066 and U+2069 confines the reordering to one field, and a name that reads as `report.pdf` inside its own field is still a name that reads as `report.pdf` — the field exists to say what somebody is about to open. An override with no terminator also runs to the end of the paragraph rather than the end of the string, so anything relying on containment has to emit the terminator itself and cannot trust the name to carry one.
+
+**Why `info` does not escape when it is redirected.** The verb has two jobs and they want opposite things. Into a pipe or a file it reproduces the metadata member byte for byte, which is what a caller redirecting it asked for and what escaping would ruin: they would get a document the container does not contain. Onto a terminal it is a display, and a terminal is the one place these characters are applied. Splitting on `IsTerminal` is where `ls` and `git` split for the same reason, and it costs no dependency.
+
+
 ## 5. The CLI
 
 Five verbs. Each does one thing the format supports.
@@ -248,7 +271,7 @@ Five verbs. Each does one thing the format supports.
 - `pack <payload> [--name <n>] [--meta <file.toml>] [-o <out.slpc>]` — writes a container. Default output is the payload's name with `.slpc` appended, per the naming convention. With no `--meta`, generates metadata carrying only the two required keys.
 - `unpack <file.slpc> [--dest <dir>] [--metadata]` — writes the payload. `--metadata` also writes `slipcase.metadata.toml`. Nothing else in the archive is written to disk, as the specification requires.
 - `repack <file.slpc> [--meta <file.toml>] [--payload <file>] [--name <n>] [-o <out.slpc>]` — changes the metadata, the payload, or both, and copies every other member through. At least one of the two, since a repack with nothing to change would read as a command that did something.
-- `info <file.slpc>` — prints the metadata.
+- `info <file.slpc>` — prints the metadata. Redirected, it reproduces the member byte for byte; onto a terminal it escapes the bidirectional formatting characters, for the reason in §4.13.
 - `validate <file.slpc>` — reports conformance. A container declaring a version this build does not implement is not reported conformant, because everything past the two required keys is a rule this version's text states and none of it was checked. That is exit 3: a refusal to answer, not a verdict on the file.
 
 Behavior that is decided rather than obvious:

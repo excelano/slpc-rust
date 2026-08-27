@@ -198,6 +198,21 @@ pub enum Unsupported {
     Encrypted,
     /// Something the ZIP crate declined to read and did not name further.
     Archive(String),
+    /// The metadata member is larger than this reader's bound (SPEC 6).
+    ///
+    /// Undetermined and never non-conformant: the bound belongs to the reader,
+    /// so two readers holding different ones must not disagree about whether
+    /// the same file conforms. Raise it with [`Limits`](crate::Limits).
+    MetadataTooLarge {
+        /// The bound that was exceeded, in bytes.
+        limit: u64,
+        /// What the central directory recorded for the member.
+        ///
+        /// A hint and not a fact. Nothing checks it against what the member
+        /// inflates to, so it is under `limit` whenever the directory
+        /// understated the member and the bound caught it on the way past.
+        declared: u64,
+    },
 }
 
 impl fmt::Display for Unsupported {
@@ -213,6 +228,16 @@ impl fmt::Display for Unsupported {
             ),
             Self::Encrypted => f.write_str("the member is encrypted (SPEC 2.5)"),
             Self::Archive(why) => write!(f, "this build cannot read the archive: {why}"),
+            // Two sentences for two situations, because a reader deciding
+            // whether to raise the bound is helped by knowing which it met.
+            Self::MetadataTooLarge { limit, declared } if declared > limit => write!(
+                f,
+                "the metadata member declares {declared} bytes, over this reader's limit of {limit} (SPEC 6)"
+            ),
+            Self::MetadataTooLarge { limit, declared } => write!(
+                f,
+                "the metadata member declares {declared} bytes and read past this reader's limit of {limit} (SPEC 6)"
+            ),
         }
     }
 }

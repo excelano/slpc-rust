@@ -690,3 +690,78 @@ fn unpack_from_standard_input_is_not_a_provenance_failure() {
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert!(s.path().join("a.txt").exists());
 }
+
+/// `validate` escapes a bidirectional override before printing the name.
+///
+/// Catches the line going out raw. A payload called `report<U+202E>fdp.exe`
+/// reads as `report.pdf` in every terminal that applies the override, and this
+/// line is what somebody reads to decide what a container holds. SPEC 3
+/// requires the escaping and SPEC 2.3 deliberately permits the name, so the
+/// container here is conformant and the output is the only thing that changes.
+#[test]
+fn validate_escapes_a_bidi_override_in_the_payload_name() {
+    let s = Sandbox::new();
+    let o = s.pipe(
+        &[
+            "pack",
+            "-",
+            "--name",
+            "report\u{202E}fdp.exe",
+            "-o",
+            "c.slpc",
+        ],
+        b"MZ\n",
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+
+    let o = s.run(&["validate", "c.slpc"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let line = out(&o);
+    assert!(
+        line.contains(r"report\u{202E}fdp.exe"),
+        "the override went out raw: {line:?}"
+    );
+    assert!(
+        !line.contains('\u{202E}'),
+        "the override went out raw: {line:?}"
+    );
+}
+
+/// `info` redirected reproduces the member byte for byte.
+///
+/// The other half of the split, and the one that would break quietly. `info`
+/// into a file or a pipe is how a caller gets the metadata out, so escaping
+/// there would hand them a document the container does not contain. Only a
+/// terminal gets the escaped form, and this harness is a pipe.
+#[test]
+fn info_redirected_is_the_member_and_not_a_rendering() {
+    let s = Sandbox::new();
+    let o = s.pipe(
+        &[
+            "pack",
+            "-",
+            "--name",
+            "report\u{202E}fdp.exe",
+            "-o",
+            "c.slpc",
+        ],
+        b"MZ\n",
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+
+    let o = s.run(&["info", "c.slpc"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let doc = out(&o);
+    assert!(
+        doc.contains('\u{202E}'),
+        "a redirected dump was escaped: {doc:?}"
+    );
+
+    // And it is the member, which is the claim worth making: what comes out
+    // parses back to the name that went in.
+    let parsed: slpc::toml_edit::DocumentMut = doc.parse().unwrap();
+    assert_eq!(
+        parsed["payload"]["file"].as_str().unwrap(),
+        "report\u{202E}fdp.exe"
+    );
+}
