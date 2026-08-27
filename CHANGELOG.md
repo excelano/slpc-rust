@@ -83,6 +83,20 @@ proves it does; the other two are new work.
 - `RawName` became `Recorded` internally, carrying the external attributes
   alongside the name it was already reading from the same header. Not public.
 
+### Fixed
+
+- **`cargo test --all-features` inside the published crate would not compile**,
+  in 0.3.5 and in this release until it was caught. `testsupport` is a path
+  dev-dependency and `cargo package` strips a path dependency it cannot resolve,
+  so the test files using it referenced a crate the packaged manifest no longer
+  declared. That is what anybody vendoring or auditing the crate runs.
+  `slpc/tests/provenance.rs` and `slipcase/tests/cli.rs` are now excluded from
+  their packages rather than shipped broken: the helper they need marks a file
+  the way a platform's downloader does, and it is shared precisely because two
+  copies of it disagreed about the Windows arm within an hour, so inlining a
+  third would undo that on purpose. Those tests need the workspace and stay in
+  it.
+
 ### Notes
 
 Two SPEC §3 requirements were already met and are now pinned by tests rather

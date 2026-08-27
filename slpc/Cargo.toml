@@ -3,6 +3,20 @@ name = "slpc"
 description = "Read, write, and validate slipcase containers: a ZIP holding a payload file and the TOML metadata that describes it"
 homepage = "https://github.com/excelano/slipcase"
 readme = "README.md"
+
+# `testsupport` is a path dev-dependency, and `cargo package` strips a path
+# dependency it cannot resolve from the packaged manifest. The test files that
+# use it then reference a crate the manifest no longer declares, so
+# `cargo test --all-features` inside the packaged tree fails to compile — which
+# is what anybody vendoring or auditing this crate runs. Shipped that way in
+# 0.3.5 and caught by RELEASING.md step 3 before 0.3.6.
+#
+# Excluded rather than inlined. The helper marks a file the way a platform's
+# downloader marks one, and it is shared precisely because it was written twice
+# and the two copies disagreed about the Windows arm within an hour; putting a
+# third copy here to satisfy the packager would be undoing that on purpose. The
+# test needs the workspace, so it stays in the workspace.
+exclude = ["tests/provenance.rs"]
 keywords = ["slipcase", "container", "metadata", "zip", "toml"]
 categories = ["filesystem", "encoding"]
 version.workspace = true
