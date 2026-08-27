@@ -1,0 +1,23 @@
+[package]
+name = "fuzz"
+description = "Throw malformed bytes at the slipcase reader and watch what it does"
+# Never published and never released, for the reason `corpus` is not: it exists
+# to be run, and `dist-workspace.toml` names its members explicitly.
+version = "0.0.0"
+publish = false
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# No `cargo-fuzz`, and the reason is worth stating rather than discovering.
+# libFuzzer needs a nightly toolchain, which is a 1.5 GB install and a second
+# compiler to keep in step with the one everything else is built by. What this
+# is for is finding the classes reading the code misses — a panic on malformed
+# input, an unbounded loop, arithmetic on an attacker's length — and a
+# mutational harness over the conformance corpus reaches those on stable. If
+# coverage-guided fuzzing is wanted later, this file is what it replaces.
+[dependencies]
+slpc = { workspace = true, features = ["fs"] }
+clap = { version = "4.6", features = ["derive"] }

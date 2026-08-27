@@ -311,6 +311,49 @@ This is the layer that matters. Passing a corpus written against the prose, by s
 
 ---
 
+### 6.1 Throwing bytes at it
+
+`fuzz/` is a mutational harness over the conformance corpus. It exists because
+every defect the 2026-08-27 security review found came from somebody *reasoning*
+about the code, and reasoning has a blind spot that volume does not: a panic on
+input nobody imagined, a loop with no bound, arithmetic on a length an attacker
+chose.
+
+**Seeded from the corpus, not from noise.** A container is a structure and
+random bytes are almost never one; a run seeded on nothing spends itself being
+refused at the first four lines. Two of the six mutations rewrite a
+little-endian field *beside a ZIP signature*, which is where the three worst
+findings of that review lived, and the rest are ordinary bit damage,
+truncation and splicing.
+
+**It counts how deep it got, and prints that.** A fuzzer that never passes the
+front door finds nothing and looks exactly like one that found nothing. Of two
+million cases from one seed: 1.19 M are refused as not an archive, 564 K are
+refused for something else, 202 K come out *conformant*, 386 K parse the
+metadata member, 129 K read a payload through, and 202 K survive a rewrite and
+are read back. Those numbers are the argument that a clean run means anything.
+
+**Stable, not `cargo-fuzz`.** libFuzzer wants a nightly toolchain, which is a
+1.5 GB install and a second compiler to keep in step with the one everything
+else is built by. This finds the classes above on the toolchain already here,
+and if coverage-guided fuzzing is wanted later it is this file that it replaces.
+What is given up is real: the mutations explore by luck rather than by feedback,
+so depth comes from volume.
+
+**It detects a crash and a hang, and not a wrong answer.** A container that
+validates as conformant when it should not is invisible here; that is the
+corpus's job, and the two are complements. It also writes the case it is about
+to try to `current.bin` first, so a run that hangs and is killed from outside
+leaves the container that hung it.
+
+    cargo run --release -p fuzz -- /path/to/slipcase/conformance
+    cargo run --release -p fuzz -- CONF --cases 2000000 --seed 7
+
+Sixteen million cases across eight seeds on 2026-08-27, then sixteen million
+more once the rewrite path was added: no panic, no case over two seconds.
+
+---
+
 ## 7. Build order
 
 1. **Read path** — open, parse, validate, expose the payload as a stream. Settles how names are decoded and compared, which everything else then reuses.
