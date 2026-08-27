@@ -43,6 +43,9 @@ tempfile = { version = "3.27", optional = true }
 all-features = true
 
 [dev-dependencies]
+# Marking a file the way a downloader does. One copy for both suites: the two
+# they had disagreed about the Windows arm within an hour of being written.
+testsupport = { path = "../testsupport" }
 # Sandbox directories for the `fs` tests, which need a real filesystem to
 # rename across. Not the same use as the optional dependency above.
 tempfile = "3.27"
@@ -60,10 +63,3 @@ zip = { version = "8.6", default-features = false, features = ["deflate-flate2-z
 # an alternate data stream is addressed by appending `:name` to a path.
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 xattr = { version = "1.6", default-features = false, optional = true }
-
-# The provenance tests mark a file the way a downloader does, which on Unix
-# means writing the extended attribute directly rather than through the code
-# under test — a test that marked with `carry` would be asking the library
-# whether it agrees with itself.
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
-xattr = { version = "1.6", default-features = false }

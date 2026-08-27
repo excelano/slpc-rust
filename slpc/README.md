@@ -98,6 +98,51 @@ It is a feature rather than part of the default surface because a caller writing
 into a socket or a buffer should not acquire a temporary-file dependency to do
 it.
 
+`payload_path` comes with it, and a caller taking a payload out of a container
+should use it rather than joining the name to a directory. A name legal under
+the specification is not always a file: Windows resolves `CON`, `COM1`, `AUX`
+and a handful of others to devices wherever the name appears, so `dir.join(name)`
+is the console rather than a path in `dir`. It is not a traversal and the check
+against SPEC 2.3 does not catch it. `display_path` is the other half, for
+showing somebody where their payload went.
+
+## Where a container came from
+
+A container downloaded from the internet is marked as such by the platform that
+downloaded it, and the mark is a property of the file rather than of its
+contents — so a payload written out of that container carries nothing unless
+something puts it there. Without that, unpacking is laundering: the payload
+reaches whatever opens it next as a file this machine made, and the warning the
+platform would have raised never appears.
+
+```toml
+slpc = { version = "0.3", features = ["fs", "provenance"] }
+```
+
+`provenance::carry` moves it across — `com.apple.quarantine` on macOS, a
+`Zone.Identifier` stream on Windows, `user.xdg.origin.url` on Linux. It fails
+only where the platform gates opening on a mark, the source carries one, and the
+copy ends up carrying none, so the whole of the rule for a caller about to hand a
+payload to the system is that **an error means do not open it**.
+
+```no_run
+use slpc::provenance::{carry, Mark};
+
+fn main() -> Result<(), slpc::Error> {
+    // The payload has just been written out of the container.
+    match carry("report.pdf.slpc".as_ref(), "report.pdf".as_ref())? {
+        Mark::Silent => {}                    // the container arrived from nowhere
+        Mark::Noted => {}                     // carried, but nothing here consults it
+        _ => {}                               // carried, and the platform will read it
+    }
+    Ok(())
+}
+```
+
+Off by default, and separate from `fs`: a caller writing containers has no use
+for it, and one unpacking only their own does not need it either. It adds one
+crate on Unix and none on Windows.
+
 ## Validating
 
 ```no_run

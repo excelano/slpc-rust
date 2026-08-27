@@ -50,7 +50,12 @@ use std::path::Path;
 use crate::error::Result;
 
 /// What was carried from a container onto the payload taken out of it.
+///
+/// `#[non_exhaustive]` for the reason every other public enum here carries it:
+/// what a platform records about a downloaded file is that platform's to
+/// change, and a fourth kind of answer must not cost a major version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Mark {
     /// The source said where it came from, and the copy now says the same. The
     /// platform will consult it before opening the payload.

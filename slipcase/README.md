@@ -71,7 +71,12 @@ metadata keys itself, so a `--meta` file that contradicts either is refused
 rather than silently overwritten, and a payload whose filename cannot be a
 member name is rejected rather than renamed. `unpack` writes the payload and,
 with `--metadata`, the metadata document; nothing else in the archive reaches
-disk. `repack` changes the metadata, the payload, or both, and copies every
+disk. It also carries whatever the platform records about where the container
+came from onto the payload, so that unpacking something downloaded does not hand
+its payload on as a file this machine made — and where it cannot, it removes the
+payload and says so rather than leaving one that opens without the warning its
+origin earned. A container read from standard input has no source to read that
+from and is unpacked without it. `repack` changes the metadata, the payload, or both, and copies every
 other member of the archive through untouched — which is how a container is
 changed without losing what this tool does not understand, and why unpacking and
 packing again is the wrong way to do it.

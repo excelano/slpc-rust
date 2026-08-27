@@ -9,6 +9,67 @@ minor bump below 1.0 is how a breaking change ships.
 This file begins at 0.3.0. Earlier releases carried no notes, and the tags and
 the commit history are the record for those.
 
+## [0.3.5] - 2026-08-26
+
+### Security
+
+- **`slipcase unpack` no longer launders where a container came from.** A
+  container downloaded from the internet is marked as such by the platform that
+  downloaded it — `com.apple.quarantine` on macOS, a `Zone.Identifier` stream on
+  Windows, `user.xdg.origin.url` on Linux — and all three are properties of the
+  file rather than of its contents. The payload written out of it carried none
+  of them, so whatever opened that payload next saw a file this machine made and
+  the warning the container would have raised never appeared. That has been true
+  since 0.1.0.
+
+  `provenance::carry`, behind the new `provenance` feature, moves the mark
+  across, and `unpack` calls it. It fails only where the platform gates opening
+  on a mark, the source carries one, and the copy ends up carrying none — so for
+  a caller about to hand a payload to the system, an error means do not open it.
+  Where `unpack` meets that failure it removes the payload rather than leaving
+  one that opens without the warning its origin earned. A container read from
+  standard input has no source to read a mark from and is unpacked without one.
+
+  Linux is a note rather than a gate: nothing there consults the attribute
+  before opening a file, and `Mark::Noted` is a separate answer so that nothing
+  reads one as the other.
+
+### Fixed
+
+- **A payload named for a Windows device now extracts as a file.** SPEC 2.3
+  accepts `CON`, `COM1`, `AUX`, `LPT1`, `PRN` and `NUL`, and the conformance
+  corpus carries a case for one, but Win32 resolves those names to devices
+  wherever they appear. `dest.join(payload_name())` was therefore not a path in
+  that directory — it was the console. Writing `CON` returned success at every
+  step and left no file, and reading it back never returned at all, so
+  `slipcase unpack` on such a container hung rather than failing.
+
+  `payload_path` asks `canonicalize` of the directory and joins the name onto
+  the answer, which reaches the filesystem without those names being looked for.
+  Nothing holds a list of reserved names: which names are devices stays
+  Windows's to know. Asking the shell to *open* such a file still fails, which
+  is the truth about that container on that platform.
+
+### Added
+
+- **`payload_path` and `display_path`**, with the `fs` feature. The first is
+  above; the second takes the `\\?\` prefix off a path before a person reads it,
+  since that prefix is how a path is addressed rather than part of its name.
+  Note that on Windows `payload_path` reports where the file is rather than how
+  the caller spelled it: `canonicalize` expands 8.3 short names and resolves
+  junctions, so a caller comparing its result against a path of their own must
+  compare files and not strings.
+
+- **The `provenance` feature**, off by default and separate from `fs`. It adds
+  one crate on Unix and none on Windows, where an alternate data stream is
+  reached through `std::fs`. `provenance::arrived_from_elsewhere` is there for a
+  caller that wants to report where a container came from rather than act on it.
+
+### Changed
+
+- **`Mark` is `#[non_exhaustive]`**, as every other public enum in the crate is.
+  What a platform records about a downloaded file is that platform's to change.
+
 ## [0.3.4] - 2026-08-21
 
 ### Fixed

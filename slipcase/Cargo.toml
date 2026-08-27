@@ -29,6 +29,9 @@ clap = { version = "4.6", features = ["derive"] }
 tempfile = "3.27"
 
 [dev-dependencies]
+# Marking a file the way a downloader does. One copy for both suites: the two
+# they had disagreed about the Windows arm within an hour of being written.
+testsupport = { path = "../testsupport" }
 # Sandbox directories for the tests that run the binary.
 tempfile = "3.27"
 # A container declaring a version this build does not implement cannot be
@@ -52,9 +55,3 @@ depends = "libc6, libgcc-s1"
 # fleet, and not CI. A path that is right in one place and silently wrong in the
 # other is worse than no path.
 license-file = ["../LICENSE", "0"]
-
-# The provenance tests mark a file the way a downloader does, writing the
-# extended attribute directly rather than through the code under test: a test
-# that marked with `carry` would ask the library whether it agrees with itself.
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
-xattr = { version = "1.6", default-features = false }

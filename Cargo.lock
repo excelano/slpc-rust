@@ -314,7 +314,7 @@ dependencies = [
  "clap",
  "slpc",
  "tempfile",
- "xattr",
+ "testsupport",
  "zip",
 ]
 
@@ -324,6 +324,7 @@ version = "0.3.5"
 dependencies = [
  "crc32fast",
  "tempfile",
+ "testsupport",
  "toml_edit",
  "xattr",
  "zip",
@@ -357,6 +358,13 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
+]
+
+[[package]]
+name = "testsupport"
+version = "0.0.0"
+dependencies = [
+ "xattr",
 ]
 
 [[package]]

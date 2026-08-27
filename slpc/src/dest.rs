@@ -19,7 +19,7 @@ use crate::error::Result;
 /// A file that appears under its real name only once it has been written.
 ///
 /// Requires the `fs` feature, which is off by default:
-/// `slpc = { version = "0.3.2", features = ["fs"] }`.
+/// `slpc = { version = "0.3", features = ["fs"] }`.
 ///
 /// Everything is written to a temporary file beside the destination and renamed
 /// into place at the end, so a write that fails partway leaves nothing behind

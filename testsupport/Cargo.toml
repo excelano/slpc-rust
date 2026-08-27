@@ -1,0 +1,15 @@
+[package]
+name = "testsupport"
+# Never published and never released, so it has no version to carry. It is in
+# the workspace because both test suites need the same helper and a copy in
+# each is what this crate exists to stop.
+version = "0.0.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+
+# Marking a file the way a downloader does needs the attribute written
+# directly. Windows needs no dependency: a stream is addressed by appending
+# `:name` to the path.
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+xattr = { version = "1.6", default-features = false }

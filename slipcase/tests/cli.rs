@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+use testsupport::mark_as_downloaded;
+
 const BIN: &str = env!("CARGO_BIN_EXE_slipcase");
 
 /// A working directory that cleans itself up.
@@ -628,36 +630,6 @@ fn the_permission_probe_leaves_nothing_behind() {
 }
 
 // --- provenance ------------------------------------------------------------
-
-/// Mark a file the way this platform's downloaders do, directly rather than
-/// through the code under test. Returns false where the filesystem will not
-/// hold the mark, which is a fact about the machine and not a defect.
-fn mark_as_downloaded(path: &Path) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        xattr::set(path, "com.apple.quarantine", b"0083;68ae0000;Safari;").is_ok()
-    }
-    #[cfg(target_os = "linux")]
-    {
-        xattr::set(
-            path,
-            "user.xdg.origin.url",
-            b"https://example.invalid/a.slpc",
-        )
-        .is_ok()
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let mut stream = path.as_os_str().to_os_string();
-        stream.push(":Zone.Identifier");
-        std::fs::write(stream, b"[ZoneTransfer]\r\nZoneId=3\r\n").is_ok()
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        let _ = path;
-        false
-    }
-}
 
 /// The defect this catches is the one that shipped: `slipcase unpack` on a
 /// downloaded container writing a payload that says nothing about where it came

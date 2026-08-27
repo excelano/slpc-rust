@@ -7,44 +7,10 @@
 #![cfg(feature = "provenance")]
 
 use slpc::provenance::{arrived_from_elsewhere, carry, Mark};
-use std::path::Path;
+use testsupport::mark_as_downloaded;
 
 fn sandbox() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
-}
-
-/// Mark `path` as having come from the internet, the way this platform's
-/// downloaders do. Returns false where the filesystem will not hold the mark,
-/// which is a fact about the machine rather than a failure of the code.
-fn mark_as_downloaded(path: &Path) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        xattr::set(path, "com.apple.quarantine", b"0083;68ae0000;Safari;").is_ok()
-    }
-    #[cfg(target_os = "linux")]
-    {
-        xattr::set(
-            path,
-            "user.xdg.origin.url",
-            b"https://example.invalid/a.slpc",
-        )
-        .is_ok()
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let mut stream = path.as_os_str().to_os_string();
-        stream.push(":Zone.Identifier");
-        std::fs::write(
-            stream,
-            b"[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://example.invalid/a.slpc\r\n",
-        )
-        .is_ok()
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        let _ = path;
-        false
-    }
 }
 
 /// **The defect this catches is the one the module exists for**: a payload

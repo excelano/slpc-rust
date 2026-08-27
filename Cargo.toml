@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["slpc", "slipcase", "corpus"]
+members = ["slpc", "slipcase", "corpus", "testsupport"]
 
 [workspace.package]
 version = "0.3.5"
