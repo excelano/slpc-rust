@@ -1026,3 +1026,67 @@ fn the_zip64_record_is_consulted_on_the_size_sentinel() {
         "the duplicate the Zip64 record holds should be what is reported: {verdict}"
     );
 }
+
+/// A member cannot be renamed by an extra field.
+///
+/// **The fourth way to split this crate's two directory readers, and the one
+/// none of the record-level guards can see.** The Info-ZIP Unicode Path field,
+/// tag 0x7075, carries a replacement name and the ZIP crate applies it; this
+/// crate counted the name field and skipped the extras, so three members with
+/// distinct recorded names — the third renaming itself to the second's — came
+/// back conformant and unpacked to the third's bytes, while every other reader
+/// saw two members of one name. Measured 2026-08-27.
+///
+/// Refused rather than honoured: SPEC §2.1 already says how a name is spelled,
+/// and a third way to spell one is a change to the format. Remove the check in
+/// `central.rs` and this reports conformant.
+#[test]
+fn a_member_cannot_be_renamed_by_an_extra_field() {
+    fn unicode_path(original: &[u8], replacement: &[u8]) -> Vec<u8> {
+        let mut body = vec![1u8];
+        body.extend_from_slice(&crc32fast::hash(original).to_le_bytes());
+        body.extend_from_slice(replacement);
+        let mut out = 0x7075u16.to_le_bytes().to_vec();
+        out.extend_from_slice(&(body.len() as u16).to_le_bytes());
+        out.extend_from_slice(&body);
+        out
+    }
+
+    let mut evil = Member::new("evil.bin", b"EVIL\n");
+    evil.extra = unicode_path(b"evil.bin", b"report.pdf");
+    let bytes = raw_zip(&[
+        Member::new(slpc::METADATA_MEMBER, metadata("report.pdf").as_bytes()),
+        Member::new("report.pdf", b"BENIGN\n"),
+        evil,
+    ]);
+
+    let verdict = slpc::validate(std::io::Cursor::new(bytes)).unwrap();
+    assert!(!verdict.is_conformant(), "{verdict}");
+    assert!(verdict.to_string().contains("0x7075"), "{verdict}");
+}
+
+/// The extra fields real tools write are left alone.
+///
+/// The other half, and the one an over-broad fix breaks. Info-ZIP writes an
+/// extended timestamp and a uid/gid field on every member; refusing a container
+/// because it carries those would reject most of what exists. Only the field
+/// that renames a member is refused.
+#[test]
+fn ordinary_extra_fields_are_not_refused() {
+    fn field(tag: u16, body: &[u8]) -> Vec<u8> {
+        let mut out = tag.to_le_bytes().to_vec();
+        out.extend_from_slice(&(body.len() as u16).to_le_bytes());
+        out.extend_from_slice(body);
+        out
+    }
+    let mut benign = field(0x5455, &[3, 0, 0, 0, 0, 0, 0, 0, 0]);
+    benign.extend_from_slice(&field(0x7875, &[1, 4, 232, 3, 0, 0, 4, 232, 3, 0, 0]));
+
+    let mut meta = Member::new(slpc::METADATA_MEMBER, metadata("report.pdf").as_bytes());
+    meta.extra = benign.clone();
+    let mut payload = Member::new("report.pdf", b"payload\n");
+    payload.extra = benign;
+
+    let verdict = slpc::validate(std::io::Cursor::new(raw_zip(&[meta, payload]))).unwrap();
+    assert!(verdict.is_conformant(), "{verdict}");
+}

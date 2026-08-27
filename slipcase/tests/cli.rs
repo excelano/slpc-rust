@@ -799,6 +799,36 @@ fn a_refused_metadata_write_leaves_no_payload_behind() {
     );
 }
 
+/// A failed payload write takes the metadata back out with it.
+///
+/// The mirror of the test above, and the case the reorder created. With the
+/// metadata committing first, a payload that cannot land leaves a file the
+/// error never mentions — and the obvious retry then fails on a file the failed
+/// run wrote. Catches the cleanup being dropped.
+#[test]
+#[cfg(unix)]
+fn a_refused_payload_write_takes_the_metadata_with_it() {
+    let s = Sandbox::new();
+    s.file("report.pdf", b"the payload\n");
+    assert_eq!(code(&s.run(&["pack", "report.pdf"])), 0);
+    std::fs::create_dir(s.path().join("dest")).unwrap();
+    std::os::unix::fs::symlink(
+        "/nonexistent/nowhere",
+        s.path().join("dest").join("report.pdf"),
+    )
+    .unwrap();
+
+    let o = s.run(&["unpack", "report.pdf.slpc", "--dest", "dest", "--metadata"]);
+    assert_ne!(code(&o), 0, "it reports failure: {}", out(&o));
+    assert!(
+        !s.path()
+            .join("dest")
+            .join("slipcase.metadata.toml")
+            .exists(),
+        "the metadata was left behind by a command that said it failed"
+    );
+}
+
 /// `-o -` is standard output and not a file to put a mark on.
 ///
 /// Catches the guard that checks `-` on the input and forgets the output, which

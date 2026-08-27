@@ -368,10 +368,26 @@ fn unpack(a: Unpack) -> Result<()> {
     // 2026-08-27, and the comment above this block used to claim the reserving
     // made that impossible. Committing the smaller file first means a failure
     // there leaves nothing at all.
-    if let Some(d) = metadata_out.take() {
-        d.commit()?;
+    let metadata_landed = match metadata_out.take() {
+        Some(d) => {
+            let at = dest.join(slpc::METADATA_MEMBER);
+            d.commit()?;
+            Some(at)
+        }
+        None => None,
+    };
+    // A failure here has already written the metadata, and leaving it is the
+    // state the reorder above was meant to stop existing: a command that exited
+    // non-zero and left a file behind, which the obvious retry then fails on.
+    // So it goes back. Only the file this run created — `Destination` refused
+    // to replace anything that was already there, so there is nothing of
+    // anybody else's to remove.
+    if let Err(e) = payload_out.commit() {
+        if let Some(at) = metadata_landed {
+            let _ = std::fs::remove_file(at);
+        }
+        return Err(e);
     }
-    payload_out.commit()?;
 
     // What the platform records about where the container came from, carried
     // onto the payload. Without it, unpacking a downloaded container hands its

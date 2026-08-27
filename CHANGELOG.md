@@ -9,6 +9,52 @@ minor bump below 1.0 is how a breaking change ships.
 This file begins at 0.3.0. Earlier releases carried no notes, and the tags and
 the commit history are the record for those.
 
+## [0.3.9] - 2026-08-27
+
+An adversarial review of the same day's hardening, which found that the
+hardening was incomplete and that one of its fixes did not fire.
+
+### Security
+
+- **A member could still be renamed out from under the uniqueness check.** 0.3.8
+  refused three ways a crafted end of central directory record could make this
+  crate and its ZIP dependency resolve different directories. There was a
+  fourth, and it is inside a single well-formed entry where no record-level
+  guard can see it: the Info-ZIP Unicode Path extra field, tag 0x7075, carries a
+  replacement name and the ZIP crate applies it, while `central.rs` skipped
+  extra fields and counted the recorded name. Three members with distinct
+  recorded names — the third renaming itself to the second's — came back
+  conformant and unpacked to the third's bytes, while Python's `zipfile` saw two
+  members of one name. The metadata member is swappable the same way.
+
+  Refused rather than honoured, which is the decision §2.1 has now taken four
+  times. Honouring it would make the field a third way to spell a member's name,
+  after the name field and the bit 11 encoding SPEC §2.1 defines, and that is a
+  change to the format rather than a fix to a reader. Measured against the tools
+  available: Info-ZIP writes 0x5455 and 0x7875 even with `-UN=UTF8`, 7-Zip
+  writes 0x000a, Python writes none. Those fields are untouched.
+
+- **The provenance carry added in 0.3.7 did not fire on a read-only container.**
+  `commit` set the replacement's permissions — taken from the file being
+  replaced — before carrying the mark onto it, so a container at 0444 made the
+  temporary read-only and `xattr::set` was then denied. Measured: a marked
+  container at 0444 came back from `repack` with no mark, silently, exit zero.
+  Where a platform enforces the mark it is worse: the carry fails, `commit`
+  propagates it, and an in-place rewrite of any read-only marked container fails
+  outright. The carry now runs first. The test that should have caught this used
+  a default-mode file.
+
+- **A failed `unpack --metadata` no longer leaves the metadata behind.** 0.3.8
+  reordered the commits so a refusal leaves no payload; the inverse was left
+  standing, so a payload that could not land left a metadata file the error
+  never mentioned and the obvious retry then failed on it.
+
+### Fixed
+
+- `display_name` escapes a backslash, so its rendering is reversible. A name
+  that literally spells `report\u{202E}fdp.exe` and one carrying the override
+  used to come out identical.
+
 ## [0.3.8] - 2026-08-27
 
 Findings from a security review of all three repositories, run the same day.

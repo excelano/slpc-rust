@@ -172,10 +172,18 @@ impl Destination {
             carry_from,
         } = self;
 
-        tmp.as_file().set_permissions(mode)?;
-
-        // Before the rename rather than after, for the reason the permissions
-        // are: the file that appears at the path should be complete at the
+        // Before the permissions, and that order is the fix rather than a
+        // preference. `in_place` takes the mode from the file being replaced,
+        // so a read-only container made the temporary read-only — and then
+        // `xattr::set` on it is denied. Measured 2026-08-27: a marked container
+        // at 0444 came back from `repack` with no mark, silently and with exit
+        // zero, which is this function's own subject arriving through this
+        // function. On the platforms where a mark is enforced it is worse: the
+        // carry fails, `commit` propagates it, and an in-place rewrite of any
+        // read-only marked container fails outright. The test that should have
+        // caught it used a default-mode file.
+        //
+        // Before the rename too, for the reason the permissions are: the file that appears at the path should be complete at the
         // instant it appears, and a window in which the replacement exists
         // unmarked is the window this exists to close.
         //
@@ -192,6 +200,8 @@ impl Destination {
         if let Some(original) = &carry_from {
             crate::provenance::carry(original, tmp.path())?;
         }
+
+        tmp.as_file().set_permissions(mode)?;
 
         let outcome = if force {
             tmp.persist(&path).map_err(|e| e.error)

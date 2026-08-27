@@ -22,6 +22,12 @@ pub struct Member {
     pub method: u16,
     pub version_made_by: u16,
     pub external_attributes: u32,
+    /// The member's extra field block, written to both headers.
+    ///
+    /// Empty for almost every fixture. It exists because one field in there,
+    /// Info-ZIP's Unicode Path at tag 0x7075, replaces the name a member is
+    /// recorded under — so a test about names has to be able to write one.
+    pub extra: Vec<u8>,
 }
 
 impl Member {
@@ -34,6 +40,7 @@ impl Member {
             method: 0,
             version_made_by: UNIX_FILE.0,
             external_attributes: UNIX_FILE.1,
+            extra: Vec::new(),
         }
     }
 
@@ -93,6 +100,7 @@ pub fn raw_zip(members: &[Member]) -> Vec<u8> {
         let offset = u32::try_from(out.len()).expect("fixture under 4 GiB");
         let len = u32::try_from(m.data.len()).expect("fixture under 4 GiB");
         let name_len = u16::try_from(m.name.len()).expect("name under 64 KiB");
+        let extra_len = u16::try_from(m.extra.len()).expect("extra under 64 KiB");
 
         out.extend_from_slice(&0x0403_4B50u32.to_le_bytes());
         out.extend_from_slice(&20u16.to_le_bytes()); // version needed
@@ -104,8 +112,9 @@ pub fn raw_zip(members: &[Member]) -> Vec<u8> {
         out.extend_from_slice(&len.to_le_bytes()); // compressed
         out.extend_from_slice(&len.to_le_bytes()); // uncompressed
         out.extend_from_slice(&name_len.to_le_bytes());
-        out.extend_from_slice(&0u16.to_le_bytes()); // extra field
+        out.extend_from_slice(&extra_len.to_le_bytes());
         out.extend_from_slice(&m.name);
+        out.extend_from_slice(&m.extra);
         out.extend_from_slice(&m.data);
 
         central.extend_from_slice(&0x0201_4B50u32.to_le_bytes());
@@ -119,13 +128,14 @@ pub fn raw_zip(members: &[Member]) -> Vec<u8> {
         central.extend_from_slice(&len.to_le_bytes());
         central.extend_from_slice(&len.to_le_bytes());
         central.extend_from_slice(&name_len.to_le_bytes());
-        central.extend_from_slice(&0u16.to_le_bytes()); // extra
+        central.extend_from_slice(&extra_len.to_le_bytes());
         central.extend_from_slice(&0u16.to_le_bytes()); // comment
         central.extend_from_slice(&0u16.to_le_bytes()); // disk
         central.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
         central.extend_from_slice(&m.external_attributes.to_le_bytes());
         central.extend_from_slice(&offset.to_le_bytes());
         central.extend_from_slice(&m.name);
+        central.extend_from_slice(&m.extra);
     }
 
     let count = u16::try_from(members.len()).expect("under 64 Ki members");

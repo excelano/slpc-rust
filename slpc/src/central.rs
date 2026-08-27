@@ -120,7 +120,38 @@ pub(crate) fn names<R: Read + Seek>(reader: &mut R) -> Result<Vec<Recorded>> {
 
         let mut bytes = vec![0u8; name_len];
         reader.read_exact(&mut bytes)?;
-        reader.seek(SeekFrom::Current(extra_len + comment_len))?;
+
+        // The extra fields are read rather than skipped, for one of them.
+        //
+        // **A member's name is not always the name field.** The Info-ZIP
+        // Unicode Path extra field, tag 0x7075, carries a replacement name and
+        // the ZIP crate applies it — `read.rs` overwrites `file_name_raw` from
+        // it after checking a CRC of the original. Skipping extra fields here
+        // therefore counted a different set of names than the crate served
+        // members under, which is the split the rest of this function exists to
+        // refuse, arriving inside a single well-formed entry where none of the
+        // record-level guards can see it. Measured 2026-08-27: three members
+        // with distinct recorded names, the third renaming itself to the
+        // second's, came back conformant and unpacked to the third's bytes,
+        // while Python's `zipfile` saw two members of one name.
+        //
+        // Refused rather than honoured, which is the same decision §2.1 has now
+        // taken four times. Honouring it would make this a third way to spell a
+        // member's name, after the name field and the bit 11 encoding SPEC §2.1
+        // already defines, and that is a change to the format rather than a fix
+        // to a reader. The cost is a container that uses the field for what it
+        // is for, and no tool measured on 2026-08-27 emits it — Info-ZIP writes
+        // 0x5455 and 0x7875 even with `-UN=UTF8`, 7-Zip writes 0x000a, Python
+        // writes none.
+        let mut extra = vec![0u8; usize::try_from(extra_len).unwrap_or_default()];
+        reader.read_exact(&mut extra)?;
+        if let Some(tag) = renaming_extra_field(&extra) {
+            return Err(Malformed::NotAnArchive(format!(
+                "a member carries extra field {tag:#06x}, which replaces the name recorded for it; a container's members are named once (SPEC 2.1)"
+            ))
+            .into());
+        }
+        reader.seek(SeekFrom::Current(comment_len))?;
 
         names.push(Recorded {
             utf8: flags & (1 << 11) != 0,
@@ -129,6 +160,30 @@ pub(crate) fn names<R: Read + Seek>(reader: &mut R) -> Result<Vec<Recorded>> {
         });
     }
     Ok(names)
+}
+
+/// The tag of a name-bearing extra field, where the block holds one.
+///
+/// Only 0x7075 changes a member's name. 0x6375, the Unicode Comment field, is
+/// the same shape and replaces a member's *comment*, which nothing here or in
+/// SPEC reads — it is named alongside so that a reader of this function does
+/// not have to go and check.
+///
+/// A malformed block stops the walk rather than failing: an extra field whose
+/// length runs past the end of the block is the ZIP crate's to reject, and this
+/// function's job is to notice a rename, not to validate what it did not write.
+fn renaming_extra_field(extra: &[u8]) -> Option<u16> {
+    const UNICODE_PATH: u16 = 0x7075;
+    let mut at = 0usize;
+    while at + 4 <= extra.len() {
+        let tag = u16::from_le_bytes(extra[at..at + 2].try_into().unwrap());
+        let len = u16::from_le_bytes(extra[at + 2..at + 4].try_into().unwrap()) as usize;
+        if tag == UNICODE_PATH {
+            return Some(tag);
+        }
+        at = at.checked_add(4).and_then(|n| n.checked_add(len))?;
+    }
+    None
 }
 
 /// How many entries the central directory holds, and where it starts.

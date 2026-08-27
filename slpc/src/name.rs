@@ -69,6 +69,13 @@ pub fn check_payload_name(name: &str) -> Result<(), NameError> {
 /// of the string, so anything relying on containment has to emit the terminator
 /// itself and cannot trust the name to carry one.
 ///
+/// A backslash is escaped too, as `\\`. Without it the rendering is not
+/// reversible: a name that literally spells `report\u{202E}fdp.exe` and one
+/// carrying the override come out identical, so a reader cannot tell a hostile
+/// name from an innocent one that looks like the escape. The security goal held
+/// either way — both visibly end in `.exe` — but a rendering that two different
+/// names share is a worse rendering.
+///
 /// The C0 controls and U+007F are not here: SPEC 2.3 excludes those from
 /// `payload.file` outright, so a conformant container has none to display.
 ///
@@ -78,17 +85,24 @@ pub fn check_payload_name(name: &str) -> Result<(), NameError> {
 ///     slpc::display_name("report\u{202E}fdp.exe"),
 ///     "report\\u{202E}fdp.exe"
 /// );
+/// // Reversible: a name that spells the escape is not the escape.
+/// assert_eq!(
+///     slpc::display_name("report\\u{202E}fdp.exe"),
+///     "report\\\\u{202E}fdp.exe"
+/// );
 /// ```
 #[must_use]
 pub fn display_name(name: &str) -> std::borrow::Cow<'_, str> {
     use std::fmt::Write as _;
 
-    if !name.chars().any(is_bidi_formatting) {
+    if !name.chars().any(|c| is_bidi_formatting(c) || c == '\\') {
         return std::borrow::Cow::Borrowed(name);
     }
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
-        if is_bidi_formatting(c) {
+        if c == '\\' {
+            out.push_str("\\\\");
+        } else if is_bidi_formatting(c) {
             // Infallible into a String; the result is discarded rather than
             // unwrapped so that this cannot panic on a name.
             let _ = write!(out, "\\u{{{:04X}}}", c as u32);
@@ -152,6 +166,24 @@ mod tests {
         ] {
             let name = format!("a{c}b");
             assert_eq!(display_name(&name), name, "U+{:04X} was changed", c as u32);
+        }
+    }
+
+    /// Two different names never render the same.
+    ///
+    /// Catches an escaping that is not reversible. Until the backslash was
+    /// escaped too, a name literally spelling `report\u{202E}fdp.exe` and one
+    /// carrying the override came out identical, so nothing downstream could
+    /// tell which it had been shown.
+    #[test]
+    fn the_rendering_does_not_collide() {
+        let hostile = display_name("report\u{202E}fdp.exe").into_owned();
+        let innocent = display_name(r"report\u{202E}fdp.exe").into_owned();
+        assert_ne!(hostile, innocent, "two names rendered the same");
+        // Both still read as what they are. The escaping changes which of the
+        // two you are looking at, not whether the extension is visible.
+        for shown in [&hostile, &innocent] {
+            assert!(shown.contains(".exe"), "{shown}");
         }
     }
 
