@@ -299,7 +299,31 @@ fn repack(a: &Repack) -> Result<()> {
             "the container this would have written is {verdict}. Nothing was changed."
         )));
     }
-    out.commit()
+    out.commit()?;
+
+    // A repack in place keeps its own provenance: `Destination::in_place`
+    // carries it onto the replacement, which is where that rule belongs because
+    // every caller replacing a file wants it. `-o` is the other shape and the
+    // library cannot help — a caller naming an output file is creating one, and
+    // nothing in `Destination::new` knows which container the bytes came out
+    // of. This does, and a container repacked from a downloaded one is as much
+    // a thing that arrived from elsewhere as the payload `unpack` writes.
+    //
+    // Not a failure when it cannot be done, which is where this differs from
+    // `unpack` above. What that guards is a payload about to be handed to the
+    // system; this is a container, and nothing opens a container but this tool,
+    // which reports provenance rather than acting on it. So the copy is left
+    // and the loss is said out loud.
+    if let (Some(out_path), false) = (&a.output, input::is_dash(&a.container)) {
+        if let Err(e) = slpc::provenance::carry(&a.container, out_path) {
+            eprintln!(
+                "slipcase: {} was written, and where {} came from could not be carried onto it: {e}",
+                out_path.display(),
+                input::name_of(&a.container),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn unpack(a: Unpack) -> Result<()> {

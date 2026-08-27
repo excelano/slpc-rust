@@ -9,6 +9,45 @@ minor bump below 1.0 is how a breaking change ships.
 This file begins at 0.3.0. Earlier releases carried no notes, and the tags and
 the commit history are the record for those.
 
+## [0.3.7] - 2026-08-27
+
+### Security
+
+- **Rewriting a container in place no longer launders it.** `Destination::in_place`
+  replaces a file the way an editor does: it writes a fresh file beside the
+  original and renames it over the top. A fresh file carries no mark, so
+  whatever the platform had recorded about where the original came from —
+  `com.apple.quarantine`, a `Zone.Identifier` stream, `user.xdg.origin.url` —
+  was gone the moment anything rewrote the container. `slipcase repack --meta`
+  on a container marked as downloaded returned it unmarked, and every payload
+  unpacked from it afterwards was unmarked too, because `provenance::carry`
+  copies from the container. True since `in_place` existed.
+
+  This is the defect 0.3.5 fixed on the unpacking side arriving through a door
+  nobody had looked at. `commit` now carries the mark onto the replacement
+  before the rename, so the file that appears at the path is complete at the
+  instant it appears. `Destination::new` is unchanged and inherits nothing: a
+  caller naming an output file is creating one, there is no original whose
+  origin it takes, and inventing one would be claiming a download that never
+  happened. That is the line `new` already took about permissions.
+
+  `slipcase repack -o <new>` carries it too, in the CLI rather than the library,
+  because only the caller knows which container the bytes came out of. It warns
+  rather than failing where it cannot: what the failing rule in `unpack` guards
+  is a payload about to be handed to the operating system, and a container is
+  opened by nothing but this tool, which reports provenance rather than acting
+  on it.
+
+### Changed
+
+- **`fs` implies `provenance`.** Not convenience: without the carry above,
+  enabling `fs` in order to replace containers is enabling a laundering bug, and
+  a security property should not depend on a caller having guessed that a second
+  feature was involved. It costs one crate on Unix — `xattr` itself, whose tree
+  of `rustix`, `bitflags` and `linux-raw-sys` `tempfile` already brings in — and
+  nothing on Windows, where an alternate data stream is reached through
+  `std::fs`. The other direction is unchanged: `provenance` does not imply `fs`.
+
 ## [0.3.6] - 2026-08-27
 
 Everything here follows `excelano/slipcase`'s reader-side hardening of the same

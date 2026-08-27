@@ -51,6 +51,14 @@ pub struct Destination {
     /// before the rename. It comes from the file being replaced where there is
     /// one, and from [`new_file_mode`] where there is not.
     mode: Permissions,
+    /// The file this one is replacing, when it is replacing one in place.
+    ///
+    /// Kept so that [`commit`](Destination::commit) can carry the platform's
+    /// record of where that file came from onto the replacement. A rename puts
+    /// a *new* file at the path and a new file carries no mark, so without this
+    /// every in-place rewrite launders the original — which is what it did
+    /// until 2026-08-27.
+    carry_from: Option<PathBuf>,
 }
 
 impl Destination {
@@ -93,7 +101,9 @@ impl Destination {
     pub fn in_place<P: AsRef<Path>>(path: P) -> Result<Self> {
         let real = std::fs::canonicalize(path)?;
         let mode = std::fs::metadata(&real)?.permissions();
-        Self::at(&real, true, Some(mode))
+        let mut this = Self::at(&real, true, Some(mode))?;
+        this.carry_from = Some(real);
+        Ok(this)
     }
 
     fn at(path: &Path, force: bool, mode: Option<Permissions>) -> Result<Self> {
@@ -119,6 +129,7 @@ impl Destination {
             path: path.to_owned(),
             force,
             mode,
+            carry_from: None,
         })
     }
 
@@ -153,9 +164,29 @@ impl Destination {
             path,
             force,
             mode,
+            carry_from,
         } = self;
 
         tmp.as_file().set_permissions(mode)?;
+
+        // Before the rename rather than after, for the reason the permissions
+        // are: the file that appears at the path should be complete at the
+        // instant it appears, and a window in which the replacement exists
+        // unmarked is the window this exists to close.
+        //
+        // Only where something is being replaced. A caller naming an output
+        // file is creating a file there, and there is no original whose
+        // provenance the new one inherits — the same line `new` takes about
+        // permissions, and for the same reason.
+        //
+        // An error here stops the commit, so the original stays. That is the
+        // right way round: `carry` fails only when this platform gates opening
+        // on a mark, the original carries one, and the replacement would not,
+        // and replacing a gated container with an ungated one is precisely the
+        // laundering it reports.
+        if let Some(original) = &carry_from {
+            crate::provenance::carry(original, tmp.path())?;
+        }
 
         let outcome = if force {
             tmp.persist(&path).map_err(|e| e.error)

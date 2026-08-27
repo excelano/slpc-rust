@@ -31,7 +31,17 @@ rust-version.workspace = true
 # Off by default: a caller who only reads containers, or who writes into a
 # socket or a buffer, should not acquire tempfile to do it, and the tree stays
 # at fifteen crates for everyone who does not ask. Both binaries ask.
-fs = ["dep:tempfile"]
+#
+# Implies `provenance`, and that is a security property rather than
+# convenience. `in_place` replaces a file by renaming a fresh one over it, and a
+# fresh file carries no mark, so without the carry in `commit` every in-place
+# rewrite strips whatever the platform recorded about where the original came
+# from — measured on 2026-08-27, and it had been true since `in_place` existed.
+# A caller who enables `fs` to replace containers would get that silently. It
+# costs one crate on Unix, `xattr` itself, whose tree of `rustix`, `bitflags`
+# and `linux-raw-sys` `tempfile` already brings in here; on Windows it costs
+# nothing, an alternate data stream being reached through `std::fs`.
+fs = ["dep:tempfile", "provenance"]
 # Carrying what the platform records about where a container came from onto the
 # payload taken out of it. Off by default, and separate from `fs` rather than
 # part of it: a caller writing containers has no use for it, and a caller who

@@ -110,3 +110,76 @@ fn a_copy_that_could_not_be_gated_is_a_failure() {
          the laundering this module exists to prevent"
     );
 }
+
+/// **Rewriting a container in place does not launder it.**
+///
+/// The defect this catches was live from the day `Destination::in_place`
+/// existed until 2026-08-27, and it is the module's own subject arriving by a
+/// door nobody watched. `in_place` replaces a file by renaming a fresh one over
+/// it, and a fresh file carries no mark — so editing the metadata of a
+/// downloaded container and saving stripped whatever the platform had recorded
+/// about where it came from. Measured before the fix: a container marked as
+/// downloaded came back from `slipcase repack --meta` with no mark at all, and
+/// every payload extracted from it afterwards was unmarked too, because
+/// `carry` copies from the container.
+///
+/// Break the carry in `commit` and this fails at the second assertion.
+///
+/// Skipped where the filesystem will not hold a mark, and announced rather than
+/// passed quietly.
+#[test]
+#[cfg(feature = "fs")]
+fn rewriting_a_container_in_place_keeps_where_it_came_from() {
+    use std::io::Write as _;
+
+    let s = sandbox();
+    let path = s.path().join("downloaded.slpc");
+    std::fs::write(&path, b"the original bytes").unwrap();
+
+    if !mark_as_downloaded(&path) {
+        eprintln!("skipped: this filesystem will not hold a mark");
+        return;
+    }
+    assert!(
+        arrived_from_elsewhere(&path),
+        "the fixture is marked before anything touches it"
+    );
+
+    let mut d = slpc::Destination::in_place(&path).unwrap();
+    d.writer().write_all(b"the rewritten bytes").unwrap();
+    d.commit().unwrap();
+
+    assert_eq!(std::fs::read(&path).unwrap(), b"the rewritten bytes");
+    assert!(
+        arrived_from_elsewhere(&path),
+        "the rewrite laundered the container"
+    );
+}
+
+/// A file written to a path nobody was replacing inherits nothing.
+///
+/// The other direction, and the one an over-eager fix breaks. `Destination::new`
+/// is a caller naming an output file: there is no original whose origin the new
+/// file inherits, and inventing one would be this library claiming a download
+/// that never happened. It is the same line `new` already takes about
+/// permissions.
+#[test]
+#[cfg(feature = "fs")]
+fn writing_a_new_file_inherits_nothing() {
+    use std::io::Write as _;
+
+    let s = sandbox();
+    let neighbour = s.path().join("downloaded.slpc");
+    std::fs::write(&neighbour, b"marked").unwrap();
+    if !mark_as_downloaded(&neighbour) {
+        eprintln!("skipped: this filesystem will not hold a mark");
+        return;
+    }
+
+    let fresh = s.path().join("fresh.slpc");
+    let mut d = slpc::Destination::new(&fresh, false).unwrap();
+    d.writer().write_all(b"mine").unwrap();
+    d.commit().unwrap();
+
+    assert!(!arrived_from_elsewhere(&fresh));
+}
