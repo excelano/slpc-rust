@@ -626,3 +626,95 @@ fn the_permission_probe_leaves_nothing_behind() {
     left.sort();
     assert_eq!(left, ["a.txt", "a.txt.slpc"]);
 }
+
+// --- provenance ------------------------------------------------------------
+
+/// Mark a file the way this platform's downloaders do, directly rather than
+/// through the code under test. Returns false where the filesystem will not
+/// hold the mark, which is a fact about the machine and not a defect.
+fn mark_as_downloaded(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        xattr::set(path, "com.apple.quarantine", b"0083;68ae0000;Safari;").is_ok()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        xattr::set(
+            path,
+            "user.xdg.origin.url",
+            b"https://example.invalid/a.slpc",
+        )
+        .is_ok()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let mut stream = path.as_os_str().to_os_string();
+        stream.push(":Zone.Identifier");
+        std::fs::write(stream, b"[ZoneTransfer]\r\nZoneId=3\r\n").is_ok()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// The defect this catches is the one that shipped: `slipcase unpack` on a
+/// downloaded container writing a payload that says nothing about where it came
+/// from, so that whatever opens it next sees a file this machine made and the
+/// warning the container would have raised never appears.
+///
+/// Through the binary rather than the library, because the library was never
+/// what was wrong — nothing called it. Remove the `carry` from `unpack` and
+/// this fails while every test in `slpc` still passes.
+#[test]
+fn unpack_carries_where_the_container_came_from_onto_the_payload() {
+    let s = Sandbox::new();
+    s.file("a.txt", b"x");
+    s.run(&["pack", "a.txt"]);
+    std::fs::remove_file(s.path().join("a.txt")).unwrap();
+
+    if !mark_as_downloaded(&s.path().join("a.txt.slpc")) {
+        eprintln!("skipped: this filesystem will not hold a provenance mark");
+        return;
+    }
+
+    assert_eq!(code(&s.run(&["unpack", "a.txt.slpc"])), 0);
+    assert!(
+        slpc::provenance::arrived_from_elsewhere(&s.path().join("a.txt")),
+        "the unpacked payload does not say it arrived from anywhere, so \
+         unpacking a downloaded container laundered it"
+    );
+}
+
+/// The defect this catches is the repair above marking everything it touches.
+/// A warning a person sees on every file is one they stop reading.
+#[test]
+fn unpack_of_a_container_made_here_marks_nothing() {
+    let s = Sandbox::new();
+    s.file("a.txt", b"x");
+    s.run(&["pack", "a.txt"]);
+    std::fs::remove_file(s.path().join("a.txt")).unwrap();
+
+    assert_eq!(code(&s.run(&["unpack", "a.txt.slpc"])), 0);
+    assert!(!slpc::provenance::arrived_from_elsewhere(
+        &s.path().join("a.txt")
+    ));
+}
+
+/// A container read from standard input has no source to read a mark from, and
+/// unpacking one is not a failure. The defect this catches is the `is_dash`
+/// guard going missing, which would make every piped unpack an error about a
+/// file that is not there.
+#[test]
+fn unpack_from_standard_input_is_not_a_provenance_failure() {
+    let s = Sandbox::new();
+    s.file("a.txt", b"x");
+    s.run(&["pack", "a.txt"]);
+    let container = std::fs::read(s.path().join("a.txt.slpc")).unwrap();
+    std::fs::remove_file(s.path().join("a.txt")).unwrap();
+
+    let o = s.pipe(&["unpack", "-"], &container);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(s.path().join("a.txt").exists());
+}

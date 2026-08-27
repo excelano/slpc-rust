@@ -222,6 +222,25 @@ The risk it carries is drift: the two conditions are mirrored from inside the ZI
 **What is not fixed is the handover.** A payload named for a device now extracts as an ordinary file and is read back byte for byte; asking the shell to open it still fails, with *the specified device name is invalid*. That is the truth about that container on that platform rather than a defect left standing.
 
 
+### 4.11 Where a container came from
+
+A container downloaded from the internet is marked as such by the platform that downloaded it: `com.apple.quarantine` on macOS, a `Zone.Identifier` alternate data stream on Windows, `user.xdg.origin.url` on Linux by freedesktop convention. All three are properties of the file rather than of its contents, so a payload written out of that container carries none of them unless something puts them there.
+
+**Without that, unpacking is laundering.** Somebody downloads a container, takes the payload out, and it reaches its handler as something this machine made; the warning the platform would have raised never appears. That is the shape of defect that made disk images and archives the delivery vehicle of choice, and it is why refusing a payload name with a separator is not the end of what unpacking owes. `slipcase unpack` did exactly this from 0.1.0 until 0.3.5.
+
+**Why the library rather than the caller**, which is §4.7's question and gets §4.7's answer. The code has no format knowledge, and neither has `Container::open`; what decides it is that a defect held once is fixed where a defect copied is rediscovered. The proof is on the record rather than hypothetical: `excelano/slipcase-desktop` wrote this module first, and the reasoning error §4.10 describes was written independently in both repositories, in nearly the same words. Two callers reasoned out the same half-question and both got it wrong.
+
+**The policy is here and not split with the caller.** `carry` fails only when the platform gates opening on a mark, the source carries one, and the copy ends up carrying none. Everything else succeeds — no mark, no such mark on this platform, a note nothing enforces, a mark the platform wrote itself. So the whole of the rule for a caller about to hand a payload to the system is that an error means do not open it. It is deliberately a test of the copy rather than of the write's own success: under the macOS App Sandbox the platform marks whatever the calling process writes and then refuses to have that mark replaced, so the write fails while the gate it exists for is in place, and `Mark::AlreadyMarked` says so. Asking the file rather than the environment is also why nothing here asks whether it is sandboxed.
+
+**Linux is a note and says so.** Nothing there consults `user.xdg.origin.url` before opening a file, so carrying it is hygiene rather than a control. `Mark::Noted` is a separate answer from `Mark::Carried` precisely so that nothing reads one as the other, and the Linux arm never fails: refusing to hand over a payload because a note nothing reads could not be written would be theatre.
+
+**Off by default, and separate from `fs`.** A caller who writes containers has no use for it, and one who only unpacks containers they made themselves does not need it either. It adds `xattr` on Unix and nothing at all on Windows, where a stream is addressed by appending `:name` to a path and `std::fs` reaches it — and `xattr`'s own tree is `rustix`, `bitflags` and `linux-raw-sys`, all three of which `fs` already brings in through `tempfile`. So it is one crate where it is anything, and §3's rule against compiling C is untouched.
+
+**What the CLI does with a failure is the CLI's, and it removes the payload.** The file is on disk, the platform would have stopped somebody opening the container it came out of, and leaving it is leaving precisely the artifact this exists to prevent. `Destination` takes the same line about a container it could not finish writing. A container read from standard input is skipped rather than failed: there is no source to read a mark from, and what dropped it down the pipe is not something this can see.
+
+**What it does not reach.** A payload extracted somewhere with no room for the mark is the failure above and is reported. A filesystem that will not hold an extended attribute at all — `tmpfs` mounted `nouser_xattr`, a FAT volume — makes the tests announce a skip rather than pass quietly, because a run that proved nothing should not read like one that did.
+
+
 ## 5. The CLI
 
 Five verbs. Each does one thing the format supports.

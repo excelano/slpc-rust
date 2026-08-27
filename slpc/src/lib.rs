@@ -16,6 +16,8 @@ mod dest;
 mod error;
 mod metadata;
 mod name;
+#[cfg(feature = "provenance")]
+pub mod provenance;
 mod write;
 
 /// The TOML implementation this crate is built on, re-exported.

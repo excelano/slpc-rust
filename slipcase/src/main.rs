@@ -333,6 +333,43 @@ fn unpack(a: Unpack) -> Result<()> {
     if let Some(d) = metadata_out.take() {
         d.commit()?;
     }
+
+    // What the platform records about where the container came from, carried
+    // onto the payload. Without it, unpacking a downloaded container hands its
+    // payload to whatever opens it next as something this machine made, and
+    // the warning the platform would have shown never appears. `slpc`'s
+    // provenance module holds the rule; an error from it means the copy is
+    // ungated where the container was not.
+    //
+    // After `commit` rather than onto the temporary file, because the mark
+    // belongs to the file a person will open and `commit` is what makes that
+    // file exist under its own name.
+    //
+    // Only where the container is a file. Read from standard input there is no
+    // source to read a mark from, and a container that arrived down a pipe
+    // carries no provenance for anyone to lose — the process on the other end
+    // is what dropped it, and this cannot see that far.
+    if !input::is_dash(&a.container) {
+        if let Err(e) = slpc::provenance::carry(&a.container, &out) {
+            // The payload is on disk and the platform would have stopped
+            // somebody opening the container it came out of. Leaving it is
+            // leaving exactly the file this is here to prevent — one that
+            // opens without the warning its origin earned — so it goes, and
+            // the message says that it went. `Destination` takes the same line
+            // about a container it could not finish writing.
+            let removed = std::fs::remove_file(&out).is_ok();
+            return Err(Failure::new(format!(
+                "cannot carry where {} came from onto its payload: {e}\n                 The payload {}, because opening it would not raise the \
+                 warning the container would have.",
+                input::name_of(&a.container),
+                if removed {
+                    "has been removed"
+                } else {
+                    "could not be removed either and is ungated"
+                },
+            )));
+        }
+    }
     Ok(())
 }
 

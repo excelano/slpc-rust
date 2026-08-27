@@ -18,6 +18,15 @@ rust-version.workspace = true
 # socket or a buffer, should not acquire tempfile to do it, and the tree stays
 # at fifteen crates for everyone who does not ask. Both binaries ask.
 fs = ["dep:tempfile"]
+# Carrying what the platform records about where a container came from onto the
+# payload taken out of it. Off by default, and separate from `fs` rather than
+# part of it: a caller writing containers has no use for it, and a caller who
+# only ever unpacks containers they made does not need it either. It adds
+# `xattr` on Unix and nothing at all on Windows, where an alternate data stream
+# is reached through `std::fs` — and `xattr`'s own tree is `rustix`, `bitflags`
+# and `linux-raw-sys`, all three of which `fs` already brings through
+# `tempfile`. So it is one crate on the platforms that need one.
+provenance = ["dep:xattr"]
 
 [dependencies]
 # Default features link libbz2 and libzstd through bzip2-sys and zstd-sys. The
@@ -43,3 +52,18 @@ crc32fast = "1.5"
 # The suite builds one deflated fixture with an ordinary writer, because
 # compressing by hand would test the test rather than the library.
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+# Extended attributes, for the `provenance` feature. `default-features = false`
+# keeps it to `rustix` rather than adding a `std::fs`-shaped convenience layer,
+# and its tree is declarations rather than a C library to compile, which is the
+# same ground DESIGN.md 3 admits `tempfile` on. Windows needs no dependency:
+# an alternate data stream is addressed by appending `:name` to a path.
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+xattr = { version = "1.6", default-features = false, optional = true }
+
+# The provenance tests mark a file the way a downloader does, which on Unix
+# means writing the extended attribute directly rather than through the code
+# under test — a test that marked with `carry` would be asking the library
+# whether it agrees with itself.
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
+xattr = { version = "1.6", default-features = false }

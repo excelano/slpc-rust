@@ -21,7 +21,7 @@ path = "src/main.rs"
 # number it has to match. See the comment there.
 # `fs` is the library's file-placement half: writing a container to a path,
 # atomically, with the permissions a file there should have. See output.rs.
-slpc = { workspace = true, features = ["fs"] }
+slpc = { workspace = true, features = ["fs", "provenance"] }
 clap = { version = "4.6", features = ["derive"] }
 # For spooling standard input, which a ZIP reader cannot take from a pipe. The
 # tree it brings is pure Rust: libc and linux-raw-sys are declarations, not a C
@@ -52,3 +52,9 @@ depends = "libc6, libgcc-s1"
 # fleet, and not CI. A path that is right in one place and silently wrong in the
 # other is worse than no path.
 license-file = ["../LICENSE", "0"]
+
+# The provenance tests mark a file the way a downloader does, writing the
+# extended attribute directly rather than through the code under test: a test
+# that marked with `carry` would ask the library whether it agrees with itself.
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
+xattr = { version = "1.6", default-features = false }
