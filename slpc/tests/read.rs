@@ -870,3 +870,100 @@ fn a_container_recording_no_mode_says_nothing() {
     // and only they go quiet.
     assert_eq!(open(&bytes).unwrap().payload_name(), "report.pdf");
 }
+
+// ---------------------------------------------------------------------------
+// SPEC 2.1: one file, one answer about which members it holds
+// ---------------------------------------------------------------------------
+
+/// An archive with two members named `report.pdf`, plus whatever the caller
+/// does to the end of central directory record afterwards.
+fn duplicate_payload_archive() -> Vec<u8> {
+    raw_zip(&[
+        Member::new(slpc::METADATA_MEMBER, metadata("report.pdf").as_bytes()),
+        Member::new("report.pdf", b"FIRST\n"),
+        Member::new("report.pdf", b"SECOND\n"),
+    ])
+}
+
+/// Where the end of central directory record starts.
+fn eocd_at(bytes: &[u8]) -> usize {
+    bytes
+        .windows(4)
+        .rposition(|w| w == 0x0605_4B50u32.to_le_bytes())
+        .expect("an end of central directory record")
+}
+
+/// The two entry counts must agree, and a duplicate hidden behind them is found.
+///
+/// **The defect this catches is the one SPEC 3's enumeration rule exists to
+/// prevent, arriving through the rule's own implementation.** Byte 8 of the
+/// record is *entries on this disk* and byte 10 is *entries in total*; this
+/// crate counted the total and its ZIP dependency counts the ones on this disk.
+/// Declaring three and two therefore hid the third member from the duplicate
+/// check while leaving it in the archive the payload is read from — a
+/// conformant verdict over one set of members and a payload served from
+/// another. Measured 2026-08-27. Set both fields to 3 and the duplicate is
+/// caught the ordinary way, which is the assertion below it.
+#[test]
+fn the_two_entry_counts_must_agree() {
+    let mut bytes = duplicate_payload_archive();
+    let at = eocd_at(&bytes);
+    bytes[at + 10..at + 12].copy_from_slice(&2u16.to_le_bytes());
+
+    let verdict = slpc::validate(std::io::Cursor::new(bytes.clone())).unwrap();
+    assert!(!verdict.is_conformant(), "{verdict}");
+    assert!(verdict.to_string().contains("single-disk"), "{verdict}");
+
+    // Honest counts: rejected, and for the duplicate rather than for the record.
+    bytes[at + 10..at + 12].copy_from_slice(&3u16.to_le_bytes());
+    let verdict = slpc::validate(std::io::Cursor::new(bytes)).unwrap();
+    assert!(verdict.to_string().contains("report.pdf"), "{verdict}");
+}
+
+/// The record must be the last thing in the file, its comment included.
+///
+/// Catches a reader that takes the last signature it finds without checking
+/// what the record claims about its own length. The ZIP crate checks, and keeps
+/// looking when the answer does not fit, so a file with a second record whose
+/// comment length overruns leaves the two halves of this crate reading two
+/// different central directories.
+#[test]
+fn the_record_must_end_the_file() {
+    let mut bytes = duplicate_payload_archive();
+    let at = eocd_at(&bytes);
+    bytes[at + 20..at + 22].copy_from_slice(&0xFFFFu16.to_le_bytes());
+
+    let verdict = slpc::validate(std::io::Cursor::new(bytes)).unwrap();
+    assert!(!verdict.is_conformant(), "{verdict}");
+    assert!(
+        verdict.to_string().contains("does not end the file"),
+        "{verdict}"
+    );
+}
+
+/// An archive split across disks is refused.
+///
+/// Catches the third field in the same record that decides which members a
+/// reader sees. Nothing produces a multi-disk container and nothing here could
+/// read one, so the honest answer is to say so rather than to read whichever
+/// part happens to be in front of us.
+#[test]
+fn a_multi_disk_archive_is_refused() {
+    // An otherwise ordinary container, so the disk field is the only thing
+    // there is to reject it for. Built with the duplicate removed, and asserted
+    // conformant first, or this would pass for the wrong reason.
+    let good = container("report.pdf", b"payload\n");
+    assert!(slpc::validate(std::io::Cursor::new(good.clone()))
+        .unwrap()
+        .is_conformant());
+
+    for field in [4usize, 6] {
+        let mut bytes = good.clone();
+        let at = eocd_at(&bytes);
+        bytes[at + field..at + field + 2].copy_from_slice(&1u16.to_le_bytes());
+
+        let verdict = slpc::validate(std::io::Cursor::new(bytes)).unwrap();
+        assert!(!verdict.is_conformant(), "field {field}: {verdict}");
+        assert!(verdict.to_string().contains("single-disk"), "{verdict}");
+    }
+}

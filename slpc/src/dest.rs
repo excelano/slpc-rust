@@ -95,9 +95,14 @@ impl Destination {
     /// container's own permissions are what the replacement gets rather than
     /// the ones a new file would.
     ///
-    /// What a rename cannot carry across is ownership, which is the standing
-    /// cost of replacing a file rather than writing into it, and it is shared
-    /// with every editor that writes this way.
+    /// What a rename cannot carry across is ownership and any other name the
+    /// file had. A hard link to the original keeps pointing at the original,
+    /// which now holds the old contents and has a link count of one — so a
+    /// container reachable under two names is rewritten under only the one it
+    /// was opened by. Both are the standing cost of replacing a file rather
+    /// than writing into it, and both are shared with every editor that writes
+    /// this way; they are named here because the alternative is somebody
+    /// discovering the second one from a container that did not change.
     pub fn in_place<P: AsRef<Path>>(path: P) -> Result<Self> {
         let real = std::fs::canonicalize(path)?;
         let mode = std::fs::metadata(&real)?.permissions();

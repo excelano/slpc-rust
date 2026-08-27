@@ -9,6 +9,64 @@ minor bump below 1.0 is how a breaking change ships.
 This file begins at 0.3.0. Earlier releases carried no notes, and the tags and
 the commit history are the record for those.
 
+## [0.3.8] - 2026-08-27
+
+Findings from a security review of all three repositories, run the same day.
+Everything here was measured against a fixture, and every fix was checked by
+breaking it and watching the test that guards it fail.
+
+### Security
+
+- **A crafted end of central directory record could hide a duplicate member from
+  the check SPEC §3 requires.** This crate resolves the central directory twice:
+  once here, to count names the ZIP crate cannot see, and once in that crate,
+  for every byte anything reads. Three fields in that record could be made to
+  split the two, so uniqueness was established over one set of members while the
+  payload came from another — the ambiguity SPEC §3's enumeration rule exists to
+  prevent, arriving through the rule's own implementation.
+
+  The counts. The record carries entries-on-this-disk and entries-in-total; this
+  crate read the total and the ZIP crate reads the count on this disk. A record
+  declaring 3 and 2 was counted here as two members and served by the crate as
+  three, so a second `report.pdf` passed a conformant verdict and was the one
+  extracted.
+
+  The comment length. Overrun it and a reader taking the last signature it finds
+  parts company with one that checks the length and keeps looking. Measured:
+  this crate served the first archive in a file and Python's `zipfile` the
+  second, with a conformant verdict on it.
+
+  The Zip64 sentinel. The ZIP crate goes looking for a Zip64 record when the
+  directory *size* field is saturated; this crate did not, so setting only that
+  field pointed the two at different records.
+
+  Chasing the crate's behaviour field by field is not the fix, because the next
+  field is the next bug. `central.rs` now refuses any record that is not
+  internally consistent: it must end the file, its two counts must agree, the
+  archive must be single-disk, and the Zip64 gate matches the crate's. SPEC §2.1
+  states the same rule, with three corpus cases in a class that had none.
+
+- **`slipcase unpack --metadata` could leave the payload on disk, unmarked,
+  while reporting failure.** Both destinations are reserved before either is
+  written, and the code said that made this impossible. Reserving is a check and
+  committing is the guarantee: `Destination::new` asks whether the path exists
+  and a dangling symbolic link answers no, so the refusal arrived at the
+  no-clobber rename — after the payload had been committed and before provenance
+  was carried. One planted link in a directory somebody unpacks into was enough.
+  The metadata commits first now, so a failure there leaves nothing at all.
+
+- **`slipcase repack -o -` wrote provenance onto a file named `-`.** The carry
+  added in 0.3.7 guarded `-` on the input and not on the output, so with the
+  container going to standard output the mark went to a real file of that name
+  in the working directory — and on Windows, where the mark is an alternate data
+  stream reached through `std::fs`, it would have created one.
+
+### Changed
+
+- `Destination::in_place`'s documentation now names hard links alongside
+  ownership as something a rename cannot carry: a container reachable under two
+  names is rewritten under only the one it was opened by.
+
 ## [0.3.7] - 2026-08-27
 
 ### Added

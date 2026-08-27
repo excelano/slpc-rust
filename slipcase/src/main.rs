@@ -314,7 +314,11 @@ fn repack(a: &Repack) -> Result<()> {
     // system; this is a container, and nothing opens a container but this tool,
     // which reports provenance rather than acting on it. So the copy is left
     // and the loss is said out loud.
-    if let (Some(out_path), false) = (&a.output, input::is_dash(&a.container)) {
+    if let (Some(out_path), false, false) = (
+        &a.output,
+        input::is_dash(&a.container),
+        a.output.as_deref().is_some_and(input::is_dash),
+    ) {
         if let Err(e) = slpc::provenance::carry(&a.container, out_path) {
             eprintln!(
                 "slipcase: {} was written, and where {} came from could not be carried onto it: {e}",
@@ -339,8 +343,9 @@ fn unpack(a: Unpack) -> Result<()> {
     let out = slpc::payload_path(&dest, c.payload_name())?;
     let mut payload_out = Destination::new(&out, a.force)?;
 
-    // Both destinations are reserved before either is written, so --metadata
-    // over an existing file fails before the payload has already landed.
+    // Both destinations are reserved before either is written, which catches
+    // the ordinary case early. It is not the guarantee — see the commit order
+    // below.
     let mut metadata_out = if a.metadata {
         let bytes = c.metadata_bytes().to_vec();
         let mut d = Destination::new(&dest.join(slpc::METADATA_MEMBER), a.force)?;
@@ -353,10 +358,20 @@ fn unpack(a: Unpack) -> Result<()> {
     };
 
     std::io::copy(&mut c.payload()?, payload_out.writer()).context("cannot write the payload")?;
-    payload_out.commit()?;
+
+    // The metadata lands first, and the order is the whole point. Both
+    // destinations are reserved before either is written, but reserving is a
+    // check and committing is the guarantee: `Destination::new` asks whether
+    // the path exists and a dangling symbolic link answers no, so the refusal
+    // arrives at the no-clobber rename instead. Committing the payload first
+    // left it on disk, unmarked, while the command exited non-zero — measured
+    // 2026-08-27, and the comment above this block used to claim the reserving
+    // made that impossible. Committing the smaller file first means a failure
+    // there leaves nothing at all.
     if let Some(d) = metadata_out.take() {
         d.commit()?;
     }
+    payload_out.commit()?;
 
     // What the platform records about where the container came from, carried
     // onto the payload. Without it, unpacking a downloaded container hands its

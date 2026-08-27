@@ -132,6 +132,18 @@ pub(crate) fn names<R: Read + Seek>(reader: &mut R) -> Result<Vec<Recorded>> {
 }
 
 /// How many entries the central directory holds, and where it starts.
+///
+/// **Everything this function refuses, it refuses because agreeing with the ZIP
+/// crate matters more than reading one more file.** This crate resolves the
+/// central directory twice — here, to count names the crate cannot see, and in
+/// the crate itself, for every byte anything actually reads. Where the two
+/// resolve *different* directories, the uniqueness SPEC 2.1 requires is
+/// established over one set of members and the payload is served from another,
+/// which is the shape of Android's Master Key bug and is what SPEC 3's
+/// enumeration rule exists to prevent. Measured on 2026-08-27, three separate
+/// fields could be made to split them, so the answer is not to chase the crate's
+/// behaviour field by field but to refuse any archive where the question has
+/// more than one answer.
 fn directory_location<R: Read + Seek>(reader: &mut R) -> Result<(u64, u64)> {
     let end = reader.seek(SeekFrom::End(0))?;
     let window = MAX_EOCD_SEARCH.min(end);
@@ -148,12 +160,57 @@ fn directory_location<R: Read + Seek>(reader: &mut R) -> Result<(u64, u64)> {
         .ok_or_else(|| Malformed::NotAnArchive("no end of central directory record".into()))?;
 
     let eocd = &tail[at..];
+    let this_disk = u16::from_le_bytes(eocd[4..6].try_into().unwrap());
+    let directory_disk = u16::from_le_bytes(eocd[6..8].try_into().unwrap());
+    let here = u64::from(u16::from_le_bytes(eocd[8..10].try_into().unwrap()));
     let count = u64::from(u16::from_le_bytes(eocd[10..12].try_into().unwrap()));
+    let size = u64::from(u32::from_le_bytes(eocd[12..16].try_into().unwrap()));
     let offset = u64::from(u32::from_le_bytes(eocd[16..20].try_into().unwrap()));
+    let comment_len = u64::from(u16::from_le_bytes(eocd[20..22].try_into().unwrap()));
 
-    // Zip64 puts 0xFFFF or 0xFFFFFFFF in the field it has outgrown and the real
-    // value in its own record, found through a locator just before this one.
-    if count == u64::from(u16::MAX) || offset == u64::from(u32::MAX) {
+    // The two count fields are *entries on this disk* and *entries in total*.
+    // A single-disk archive has them equal, and every writer produces one. Read
+    // apart they are a lever: this function used to take the total and the ZIP
+    // crate takes the count on this disk, so an archive declaring 3 and 2 was
+    // counted here as two members and served by the crate as three — a
+    // duplicate payload smuggled past a conformant verdict.
+    if here != count {
+        return Err(Malformed::NotAnArchive(format!(
+            "the end of central directory record says {here} entries on this disk and {count} in total; a container is a single-disk archive"
+        ))
+        .into());
+    }
+    if this_disk != 0 || directory_disk != 0 {
+        return Err(Malformed::NotAnArchive(
+            "the archive is split across disks; a container is a single-disk archive".into(),
+        )
+        .into());
+    }
+
+    // The record has to be the last thing in the file, its comment included.
+    // Without this the *last* signature wins here while the ZIP crate, which
+    // checks the comment length and keeps looking, falls back to an earlier
+    // record — two directories, two payloads, one verdict. Refusing rather than
+    // falling back too: a file with a second end-of-central-directory record
+    // that does not add up is one whose contents depend on who is reading, and
+    // SPEC 2.1 has already taken that decision about duplicate names and about
+    // two archives in one file.
+    let record_end = from + at as u64 + 22 + comment_len;
+    if record_end != end {
+        return Err(Malformed::NotAnArchive(format!(
+            "the end of central directory record does not end the file: it accounts for {record_end} bytes of {end}"
+        ))
+        .into());
+    }
+
+    // The same gate the ZIP crate applies, `size` included. Reading Zip64 on a
+    // different trigger than the crate is the third way to split the two
+    // parsers: set only the directory-size sentinel and the crate reads the
+    // Zip64 record while this reads the one beside it.
+    let sentinel = count == u64::from(u16::MAX)
+        || offset == u64::from(u32::MAX)
+        || size == u64::from(u32::MAX);
+    if sentinel {
         if let Some(z) = zip64(&tail, at, reader)? {
             return Ok(z);
         }
