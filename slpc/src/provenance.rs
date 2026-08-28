@@ -69,6 +69,19 @@ pub enum Mark {
     /// [`Carried`](Mark::Carried) because the copy does not say what the source
     /// said, only that it came from somewhere.
     AlreadyMarked,
+    /// The platform's own mark stands on the copy, and the source's value was
+    /// kept beside it under an attribute of this crate's own.
+    ///
+    /// [`AlreadyMarked`](Mark::AlreadyMarked) with the detail recovered. The
+    /// gate is the platform's either way; what this adds is the answer to
+    /// *where did it come from*, which the platform destroys and will not let
+    /// anything put back. It is a note and never a control — nothing but this
+    /// crate reads it, exactly as [`Noted`](Mark::Noted) is a note on Linux —
+    /// and it is as forgeable and as removable as any attribute on a file
+    /// somebody can write. That costs nothing, because a forged one can only
+    /// make a caller report provenance it cannot prove, and over-reporting is
+    /// the side this module errs on deliberately.
+    Recorded,
     /// The source said nothing about where it came from, or this platform keeps
     /// nothing that would say.
     Silent,
@@ -89,7 +102,11 @@ pub fn carry(from: &Path, to: &Path) -> Result<Mark> {
         // costs nothing that matters. Asked of the file rather than of the
         // process, so this is one branch on all three platforms and not a
         // sandbox check.
-        Err(_) if platform::carries_a_mark(to) => Ok(Mark::AlreadyMarked),
+        Err(_) if platform::carries_a_mark(to) => Ok(if platform::note_origin(from, to) {
+            Mark::Recorded
+        } else {
+            Mark::AlreadyMarked
+        }),
         other => Ok(other?),
     }
 }
@@ -129,14 +146,79 @@ mod platform {
     /// rewriting it would be claiming the download was the caller's.
     const QUARANTINE: &str = "com.apple.quarantine";
 
+    /// Where the source's mark is kept when the platform will not let it be
+    /// carried, which under the App Sandbox is always.
+    ///
+    /// Named for the format rather than for this crate or for any application:
+    /// `slipcase` the tool and Slipcase the application both write and read it,
+    /// and it matches `com.excelano.slipcase`, the type the desktop bundle
+    /// exports. The name is public surface the moment it ships.
+    ///
+    /// The value is the source's quarantine attribute copied verbatim, so the
+    /// agent, the timestamp and the event identifier all survive, which is
+    /// strictly more than the platform leaves behind.
+    const ORIGIN_NOTE: &str = "com.excelano.slipcase.origin";
+
+    // Deny the quarantine write the way the App Sandbox denies it, which is
+    // the one thing no unsandboxed test can cause.
+    //
+    // The sandbox refuses *this attribute* and permits every other write to the
+    // same file, and nothing available to a test reproduces that asymmetry.
+    // Measured 2026-08-28: `0o444` denies our own attribute exactly as it
+    // denies quarantine, so the `unwritable` seam the tests already use reaches
+    // `Mark::AlreadyMarked` and can never reach `Mark::Recorded`; and the
+    // kernel validates the value not at all — an empty one, `garbage`, and
+    // non-hex flags are all accepted — so a malformed mark is no seam either.
+    //
+    // A branch this module cannot test is a branch that rots, and this one
+    // decides whether provenance survives a save. Hence a seam, confined to
+    // `cfg(test)` so nothing of it ships.
+    #[cfg(test)]
+    thread_local! {
+        pub(super) static DENY_QUARANTINE_WRITE: std::cell::Cell<bool> =
+            const { std::cell::Cell::new(false) };
+    }
+
+    fn set_quarantine(to: &Path, value: &[u8]) -> io::Result<()> {
+        #[cfg(test)]
+        if DENY_QUARANTINE_WRITE.with(std::cell::Cell::get) {
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        }
+        xattr::set(to, QUARANTINE, value)
+    }
+
     pub fn carry(from: &Path, to: &Path) -> io::Result<Mark> {
         match xattr::get(from, QUARANTINE)? {
             Some(value) => {
-                xattr::set(to, QUARANTINE, &value)?;
+                set_quarantine(to, &value)?;
                 Ok(Mark::Carried)
             }
             None => Ok(Mark::Silent),
         }
+    }
+
+    /// Keep the source's mark beside the copy's own, and say whether it stuck.
+    ///
+    /// Called only where [`super::carry`] has found that the platform marked
+    /// the copy itself and refused to have that replaced. Measured 2026-08-28
+    /// inside a bundle signed with the App Sandbox entitlement: the refusal is
+    /// specific to `com.apple.quarantine`, an attribute of our own goes on
+    /// without complaint, and it survives `-[NSFileManager replaceItemAtURL:]`
+    /// — which is the operation that destroys the attribution in the first
+    /// place, so the note outlives the save that costs the mark.
+    ///
+    /// Best effort in both directions, like the Linux notes: a filesystem that
+    /// will not hold the attribute is not a reason to refuse a payload, because
+    /// the copy is gated by the platform's own mark whatever happens here.
+    pub fn note_origin(from: &Path, to: &Path) -> bool {
+        let Ok(Some(value)) = xattr::get(from, QUARANTINE) else {
+            return false;
+        };
+        xattr::set(to, ORIGIN_NOTE, &value).is_ok()
+    }
+
+    fn note_of(path: &Path) -> Option<Vec<u8>> {
+        xattr::get(path, ORIGIN_NOTE).ok().flatten()
     }
 
     /// Whether anything at all will consult a mark before opening this file.
@@ -144,7 +226,17 @@ mod platform {
         value_of(path).is_some()
     }
 
+    /// **The note is consulted here and nowhere else.** This is the question
+    /// the card asks — *did this come from somewhere* — and a note answers it.
+    /// [`carries_a_mark`] is the other question, *will anything gate on this*,
+    /// and a note answers nothing there because nothing but this crate reads
+    /// it. Collapsing the two is the defect that made a container somebody made
+    /// on this machine report itself as downloaded, and they are separate for
+    /// that reason.
     pub fn arrived_from_elsewhere(path: &Path) -> bool {
+        if note_of(path).is_some() {
+            return true;
+        }
         match value_of(path) {
             Some(value) => !this_process_wrote(&value),
             None => false,
@@ -207,6 +299,22 @@ mod platform {
         let mut named = path.as_os_str().to_os_string();
         named.push(ZONE);
         named
+    }
+
+    /// Nothing, deliberately, and this arm can reach the branch that calls it.
+    ///
+    /// [`super::carry`]'s fallback fires here whenever the zone write fails
+    /// over a copy that already carries a gating stream, so unlike Linux this
+    /// is not dead code. A second stream beside `Zone.Identifier` would hold a
+    /// note perfectly well — a stream is addressed by appending `:name` and
+    /// `std::fs` reaches it. What is missing is a measurement: nothing has
+    /// established what the shell does with an unknown stream, whether it
+    /// survives the copies and the archivers that strip `Zone.Identifier`, or
+    /// whether a packaged install sees it at all. Writing it here on the
+    /// strength of the macOS result would be exactly the inference this crate
+    /// keeps refusing to make.
+    pub fn note_origin(_from: &Path, _to: &Path) -> bool {
+        false
     }
 
     pub fn carry(from: &Path, to: &Path) -> io::Result<Mark> {
@@ -322,6 +430,18 @@ mod platform {
         Ok(if carried { Mark::Noted } else { Mark::Silent })
     }
 
+    /// Nothing, and unreachable besides. [`super::carry`] only reaches this
+    /// where the platform's write failed, and `carry` above cannot fail on this
+    /// platform — a note nothing reads is not worth refusing a payload over, so
+    /// every arm of it returns `Ok`. It exists so that the wrapper has one
+    /// shape on every platform rather than a `cfg` in the middle of the rule.
+    ///
+    /// There is nothing to recover here in any case: what would be noted is
+    /// already what this arm carries, and nothing overwrites it.
+    pub fn note_origin(_from: &Path, _to: &Path) -> bool {
+        false
+    }
+
     /// The same question here, and neither answer gates anything: these
     /// attributes are a note, so nothing on this platform consults one before
     /// opening a file and nothing writes one on a caller's behalf.
@@ -347,6 +467,10 @@ mod platform {
     }
 
     pub fn carries_a_mark(_path: &Path) -> bool {
+        false
+    }
+
+    pub fn note_origin(_from: &Path, _to: &Path) -> bool {
         false
     }
 
@@ -460,7 +584,22 @@ mod tests {
 
 #[cfg(all(test, target_os = "macos"))]
 mod macos_tests {
-    use super::{carry, Mark};
+    use super::platform::carries_a_mark;
+    use super::{arrived_from_elsewhere, carry, Mark};
+
+    const ORIGIN_NOTE: &str = "com.excelano.slipcase.origin";
+
+    /// Deny the quarantine write for the duration of one call, which is what
+    /// the App Sandbox does and what no permission bit can imitate — `0o444`
+    /// denies our own attribute too, so it can only ever produce
+    /// `AlreadyMarked`. Restored on the way out so one test cannot leak into
+    /// the next.
+    fn with_quarantine_denied<T>(f: impl FnOnce() -> T) -> T {
+        super::platform::DENY_QUARANTINE_WRITE.with(|d| d.set(true));
+        let out = f();
+        super::platform::DENY_QUARANTINE_WRITE.with(|d| d.set(false));
+        out
+    }
 
     const QUARANTINE: &str = "com.apple.quarantine";
     const FROM_SAFARI: &[u8] = b"0083;6a8dbb61;Safari;B8AC643B-5609-41D4-A666-ACC147704C79";
@@ -639,6 +778,97 @@ mod macos_tests {
             xattr::get(&to, QUARANTINE).expect("reading"),
             Some(FROM_SAFARI.to_vec()),
             "the copy does not carry the value the container carried"
+        );
+    }
+
+    /// The defect this catches is a save under the App Sandbox laundering the
+    /// card. The platform marks the rewrite, refuses to have that replaced, and
+    /// the container then reports itself as something this machine made — so a
+    /// person watches *arrived from elsewhere* disappear because they edited a
+    /// title. Measured by hand on 2026-08-28 before this existed.
+    #[test]
+    fn a_mark_that_cannot_be_carried_is_recorded_beside_the_one_that_stands() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let from = dir.path().join("downloaded.slpc");
+        let to = dir.path().join("rewritten.slpc");
+        std::fs::write(&from, b"container").expect("the container");
+        std::fs::write(&to, b"rewrite").expect("the rewrite");
+        xattr::set(&from, QUARANTINE, FROM_SAFARI).expect("marking the source");
+        xattr::set(&to, QUARANTINE, FROM_US).expect("the platform marking the copy");
+
+        assert_eq!(
+            with_quarantine_denied(|| carry(&from, &to)).expect("not a failure"),
+            Mark::Recorded
+        );
+        assert_eq!(
+            xattr::get(&to, ORIGIN_NOTE).expect("reading the note"),
+            Some(FROM_SAFARI.to_vec()),
+            "the source's own value, verbatim, agent and event identifier included"
+        );
+        assert!(
+            arrived_from_elsewhere(&to),
+            "the whole point: the copy still says where it came from"
+        );
+    }
+
+    /// The defect this catches is the note being treated as a gate. Nothing but
+    /// this crate reads it, so a copy carrying only a note must not be reported
+    /// as something the platform will stop — that is the confusion that made a
+    /// container somebody built here report itself as downloaded, and it cost
+    /// an amendment to separate the two questions.
+    #[test]
+    fn a_note_answers_where_it_came_from_and_never_whether_it_is_gated() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let noted = dir.path().join("noted.slpc");
+        std::fs::write(&noted, b"container").expect("the container");
+        xattr::set(&noted, ORIGIN_NOTE, FROM_SAFARI).expect("noting the origin");
+
+        assert!(arrived_from_elsewhere(&noted), "the card's question");
+        assert!(!carries_a_mark(&noted), "the gate's question");
+    }
+
+    /// The defect this catches is `carry` reporting `Recorded` when it wrote
+    /// nothing, which would tell a caller provenance survived where it did not.
+    /// A source carrying no mark has nothing to record, so the fallback must
+    /// stay `AlreadyMarked`.
+    #[test]
+    fn nothing_is_recorded_when_the_source_said_nothing() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let from = dir.path().join("local.slpc");
+        let to = dir.path().join("rewritten.slpc");
+        std::fs::write(&from, b"container").expect("the container");
+        std::fs::write(&to, b"rewrite").expect("the rewrite");
+        xattr::set(&to, QUARANTINE, FROM_US).expect("the platform marking the copy");
+
+        // `carry` returns Silent before the fallback is reached, because the
+        // source has nothing to carry. The note must not appear regardless.
+        assert_eq!(
+            with_quarantine_denied(|| carry(&from, &to)).expect("not a failure"),
+            Mark::Silent
+        );
+        assert_eq!(xattr::get(&to, ORIGIN_NOTE).expect("reading"), None);
+    }
+
+    /// The defect this catches is the note surviving as a stale claim. A
+    /// container rewritten from a source that arrived from elsewhere records
+    /// that source; one rewritten from a local source must not keep whatever
+    /// the destination said before.
+    #[test]
+    fn a_note_already_on_the_copy_is_not_left_to_go_stale() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let from = dir.path().join("downloaded.slpc");
+        let to = dir.path().join("rewritten.slpc");
+        std::fs::write(&from, b"container").expect("the container");
+        std::fs::write(&to, b"rewrite").expect("the rewrite");
+        xattr::set(&from, QUARANTINE, FROM_SAFARI).expect("marking the source");
+        xattr::set(&to, QUARANTINE, FROM_US).expect("the platform marking the copy");
+        xattr::set(&to, ORIGIN_NOTE, b"0083;1;SomethingElse;stale").expect("a stale note");
+
+        with_quarantine_denied(|| carry(&from, &to)).expect("not a failure");
+        assert_eq!(
+            xattr::get(&to, ORIGIN_NOTE).expect("reading the note"),
+            Some(FROM_SAFARI.to_vec()),
+            "replaced rather than left saying where some earlier file came from"
         );
     }
 }

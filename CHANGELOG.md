@@ -9,6 +9,43 @@ minor bump below 1.0 is how a breaking change ships.
 This file begins at 0.3.0. Earlier releases carried no notes, and the tags and
 the commit history are the record for those.
 
+## [Unreleased]
+
+### Added
+
+- **`Mark::Recorded`, and an origin note that survives what the App Sandbox
+  destroys.** Under the sandbox the platform marks whatever the calling process
+  writes and refuses to have that mark replaced, so `carry` reported
+  `AlreadyMarked` and the source's value was lost. The gate was never the
+  problem — the copy is gated whoever marked it — but the answer to *where did
+  it come from* was, and a caller that reports provenance could no longer tell a
+  container that arrived from elsewhere from one made on the machine. Found in
+  `slipcase-desktop`, where saving an edit to a downloaded container made the
+  card's *arrived from elsewhere* line disappear.
+
+  `carry` now keeps the source's quarantine value verbatim under
+  `com.excelano.slipcase.origin` when the platform refuses to carry it, and
+  answers `Mark::Recorded` rather than `Mark::AlreadyMarked` when it did.
+  `arrived_from_elsewhere` consults the note. `carries_a_mark` deliberately does
+  **not**: the note gates nothing, nothing outside this crate reads it, and a
+  caller deciding whether to hand a payload to the system must not read our own
+  writing as the platform's word.
+
+  Three things measured inside a bundle signed with the sandbox entitlement
+  rather than assumed: the refusal is specific to `com.apple.quarantine` and an
+  attribute of our own goes on without complaint; the note survives
+  `-[NSFileManager replaceItemAtURL:]`, which is the operation that destroys the
+  attribution; and no supported API preserves the original attribution, since
+  `NSURL`'s `quarantinePropertiesKey` succeeds and then substitutes the calling
+  process as the agent.
+
+  macOS only. Windows can reach the same branch and does nothing there yet, for
+  want of a measurement; Linux cannot reach it, because its `carry` never fails.
+  Nothing changes for a caller that is not sandboxed.
+
+  `Mark` is `#[non_exhaustive]`, so the new variant is not a breaking change for
+  anyone matching on it.
+
 ## [0.3.9] - 2026-08-27
 
 An adversarial review of the same day's hardening, which found that the
