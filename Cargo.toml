@@ -3,7 +3,7 @@ resolver = "3"
 members = ["slpc", "slipcase", "corpus", "fuzz", "testsupport"]
 
 [workspace.package]
-version = "0.3.9"
+version = "0.3.10"
 edition = "2021"
 authors = ["David M. Anderson"]
 license = "MIT"
@@ -22,7 +22,7 @@ rust-version = "1.88"
 # version requirement cannot inherit `workspace.package.version`, so this
 # number is written twice by necessity — adjacent is the best available.
 [workspace.dependencies]
-slpc = { path = "slpc", version = "0.3.9" }
+slpc = { path = "slpc", version = "0.3.10" }
 
 # cargo-dist builds release binaries under this profile. Thin LTO rather than
 # fat: the link is a fraction of the time and the size difference on a binary
