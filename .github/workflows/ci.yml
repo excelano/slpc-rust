@@ -62,6 +62,11 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --component clippy
 
+      # Pinned to a commit rather than to `v2`, which is a tag its author can
+      # move. Dependabot keeps the pin current — the trailing comment is what
+      # tells it which tag to track — so this costs nothing to maintain and
+      # takes away one way a third party changes what runs here without a
+      # commit in this repository.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2
 
       # `--all-features` so the `fs` feature is in: it is what `Destination`
