@@ -26,6 +26,11 @@ pub(crate) struct Entry {
     /// would otherwise need the archive, and needing the archive is what would
     /// make asking a member's size require `&mut`.
     size: u64,
+    /// The CRC-32 the archive records for the member, kept from the same pass
+    /// as the name and the size. Here for the reason `size` is: the central
+    /// directory has it, and going back to the archive is what would make
+    /// asking need `&mut`.
+    crc: u32,
     /// Whether general purpose bit 0 is set on the member.
     encrypted: bool,
     /// The compression method's number, when it is one this build carries no
@@ -49,6 +54,7 @@ fn entries_of<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<Vec<Entry>>
             raw: f.name_raw().to_owned(),
             kind: EntryKind::from_mode(f.unix_mode()),
             size: f.size(),
+            crc: f.crc32(),
             encrypted: f.encrypted(),
             unsupported_method: unsupported_method(f.compression()),
         });
@@ -288,6 +294,47 @@ impl<R: Read + Seek> Container<R> {
             .payload_index
             .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
         Ok(self.entries[i].size)
+    }
+
+    /// The CRC-32 the archive records for the payload.
+    ///
+    /// Read from the central directory alongside the size, so this decompresses
+    /// nothing and costs no more than asking.
+    ///
+    /// **A ZIP field and not a slipcase one.** SPEC 5 defines no checksum or
+    /// fixity key, and this is not one arriving by another road. It is the
+    /// value a ZIP writer computes over a member as it stores it and a ZIP
+    /// reader verifies on the way back out, and it is recorded in every
+    /// container because it is recorded in every archive. What it answers is
+    /// whether a file is the one that came out of this container. What it does
+    /// not answer is whether the container is the one somebody sent, and a
+    /// caller wanting that needs something this crate does not offer and the
+    /// specification does not define.
+    ///
+    /// For a caller holding a payload it extracted earlier and asking whether
+    /// it has been edited since:
+    ///
+    /// ```no_run
+    /// # fn main() -> slpc::Result<()> {
+    /// let c = slpc::Container::open("report.pdf.slpc")?;
+    /// let extracted = std::fs::read("report.pdf")?;
+    /// if crc32fast::hash(&extracted) != c.payload_crc()? {
+    ///     println!("the copy on disk is not the one in the container");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Unsupported::Version`] where the container declares a version this
+    /// build does not implement, since its payload was never located. Same
+    /// refusal, and for the same reason, as [`Container::payload_size`].
+    pub fn payload_crc(&self) -> Result<u32> {
+        let i = self
+            .payload_index
+            .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
+        Ok(self.entries[i].crc)
     }
 
     /// The permission bits the archive records for the payload, where it

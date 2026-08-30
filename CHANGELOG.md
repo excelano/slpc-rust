@@ -9,6 +9,29 @@ minor bump below 1.0 is how a breaking change ships.
 This file begins at 0.3.0. Earlier releases carried no notes, and the tags and
 the commit history are the record for those.
 
+## [Unreleased]
+
+### Added
+
+- **`Container::payload_crc`**, the CRC-32 the ZIP central directory already
+  records for the payload member. Read in the same pass as the name, the size
+  and the kind, so it decompresses nothing and needs no `&mut`, and it refuses
+  the way `payload_size` does for a container declaring a version this build
+  does not implement.
+
+  It answers one question: whether a file on disk is the one that came out of
+  this container. A caller that extracted a payload earlier and wants to know
+  whether it has been edited since had no way to ask without keeping a record of
+  what it wrote — a second copy of a fact, which can drift from the fact, and
+  which is least trustworthy at the moment such a record is usually consulted:
+  after something went wrong. The container's own value needs nothing
+  maintaining it, because repacking recomputes it.
+
+  **Documented as the ZIP field it is.** SPEC 5 defines no checksum or fixity
+  key, and this is not one arriving by another road. A format library exposing a
+  checksum invites the reading the specification declined to license, so the doc
+  comment says what it does not answer as plainly as what it does.
+
 ## [0.3.10] - 2026-08-28
 
 ### Added

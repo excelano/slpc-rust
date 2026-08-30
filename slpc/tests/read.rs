@@ -445,6 +445,76 @@ fn an_unrecognized_version_has_no_payload_to_size() {
     ));
 }
 
+// --- the payload's CRC -----------------------------------------------------
+
+#[test]
+fn reports_the_crc_the_archive_recorded_for_the_payload() {
+    let payload = b"%PDF-1.7 not really\n";
+    let c = open(&container("report.pdf", payload)).unwrap();
+    assert_eq!(c.payload_crc().unwrap(), crc32fast::hash(payload));
+}
+
+#[test]
+fn the_crc_is_of_the_uncompressed_payload() {
+    // The stored bytes of a deflated member are not the member, and a caller
+    // comparing a file on disk against the container has the uncompressed form
+    // in hand. Asserted against a fixture that actually compressed, so a
+    // regression to the stored bytes fails here rather than passing by
+    // coincidence on an incompressible payload.
+    let text = "a".repeat(4096);
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts: zip::write::FileOptions<'_, ()> =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    w.start_file(METADATA_MEMBER, opts).unwrap();
+    std::io::Write::write_all(&mut w, metadata("big.txt").as_bytes()).unwrap();
+    w.start_file("big.txt", opts).unwrap();
+    std::io::Write::write_all(&mut w, text.as_bytes()).unwrap();
+    let bytes = w.finish().unwrap().into_inner();
+
+    let c = open(&bytes).unwrap();
+    assert_eq!(c.payload_crc().unwrap(), crc32fast::hash(text.as_bytes()));
+    assert!(
+        bytes.len() < 2048,
+        "the fixture did not compress, so this proves nothing"
+    );
+}
+
+#[test]
+fn a_payload_of_zero_length_has_a_crc_and_not_an_error() {
+    // SPEC 2.3 permits a zero-length payload, and CRC-32 of nothing is zero.
+    // A number rather than a complaint, for the same reason the size is.
+    let c = open(&container("empty.bin", b"")).unwrap();
+    assert_eq!(c.payload_crc().unwrap(), 0);
+}
+
+#[test]
+fn the_crc_is_the_payloads_and_not_the_metadatas() {
+    // Both members have one, they are adjacent in the same directory, and an
+    // off-by-one in the index would read the other and look plausible.
+    let c = open(&container("report.pdf", b"payload")).unwrap();
+    assert_eq!(c.payload_crc().unwrap(), crc32fast::hash(b"payload"));
+    assert_ne!(
+        c.payload_crc().unwrap(),
+        crc32fast::hash(metadata("report.pdf").as_bytes())
+    );
+}
+
+#[test]
+fn an_unrecognized_version_has_no_payload_to_checksum() {
+    // The payload was never located. Same refusal as asking for its size, and
+    // for the same reason.
+    let doc = "slipcase_version = \"9.4\"\n\n[payload]\nfile = \"report.pdf\"\n";
+    let bytes = raw_zip(&[
+        Member::new(METADATA_MEMBER, doc.as_bytes()),
+        Member::new("report.pdf", b"x"),
+    ]);
+    let c = open(&bytes).unwrap();
+    assert!(matches!(
+        c.payload_crc(),
+        Err(Error::Unsupported(Unsupported::Version(v))) if v == "9.4"
+    ));
+}
+
 // --- whether the payload can be read ---------------------------------------
 
 /// A container whose members are deflated, built by an ordinary writer.
