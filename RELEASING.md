@@ -28,6 +28,12 @@ command, the apt package, the Homebrew formula, both crates — stays unsuffixed
 This is the mismatch to get right when running komac: the asset URL carries
 `slipcase-`, and only the identifier carries `-cli`.
 
+**The moniker is `slipcase-cli` too, and that is the deliberate part.** Every
+sibling uses its bare command name, so this one looks like an oversight and is
+not. The moniker is what `winget install <name>` resolves against, and pointing
+`slipcase` at this package would rebuild the ambiguity the identifier exists to
+prevent. `winget install slipcase` should reach the desktop app.
+
 ## The version is written twice, and the second one is quiet
 
 The two crates version in lockstep: one number, one tag, one release. Bump it in
