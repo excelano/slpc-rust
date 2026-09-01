@@ -47,20 +47,24 @@ brew install excelano/tap/slipcase
 cargo install slipcase
 ```
 
-### Anywhere else
+### Windows
 
-```sh
-curl -fsSL https://github.com/excelano/slpc-rust/releases/latest/download/slipcase-installer.sh | sh
-```
-
-PowerShell, for Windows:
+In PowerShell:
 
 ```powershell
-irm https://github.com/excelano/slpc-rust/releases/latest/download/slipcase-installer.ps1 | iex
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/excelano/slpc-rust/releases/latest/download/slipcase-installer.ps1 | iex"
 ```
 
-Every release also carries plain archives for macOS, Linux, and Windows on both
-Intel and ARM, each with a `.sha256` beside it.
+### Curl (any Linux or macOS)
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/excelano/slpc-rust/main/install.sh | sh
+```
+
+To remove it: swap `install.sh` for `uninstall.sh` in that line.
+
+Every release also carries plain archives — macOS and Linux on both Intel and
+ARM, Windows on Intel — each with a `.sha256` beside it.
 <!-- /shared:install -->
 
 ## The tool

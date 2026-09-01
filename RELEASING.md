@@ -1,88 +1,126 @@
-# Releasing
+# Releasing slipcase
 
-The loop for a new version. Run it from a clean `main` with the working tree committed. Examples cut `v0.1.0`.
+The release loop lives in `~/notes/releasing.md` — the ordered steps, the apt
+step, crates.io, the spent-tag rule, and the standing facts about tokens and
+secrets. Failure recipes are in `~/notes/build_release_gotchas.md`. This file
+carries what is true of slpc-rust and not of its siblings.
 
-**The two crates version in lockstep**: one number in `[workspace.package]`, one tag, one release.
+| | |
+|---|---|
+| Loop | cargo-dist |
+| Version lives in | two places in the root `Cargo.toml` — see below |
+| `apt-ship` argument | `slpc-rust` |
+| crates | `slpc`, then `slipcase`, in that order |
+| winget package | `Excelano.slipcase-cli` |
+| Windows asset | `slipcase-x86_64-pc-windows-msvc.zip` |
 
-## The loop
+The crates.io publish runs from this repository's own `publish-crate.yml` rather
+than the fleet's shared workflow; that file states why, and why the order in the
+table is not arbitrary.
 
-1. **Bump the version, in two adjacent places** in the root `Cargo.toml`: `version` under `[workspace.package]`, and the `slpc` requirement under `[workspace.dependencies]`. Getting the second wrong is quiet — a caret requirement on the old number still resolves, and the published binary asks crates.io for a library older than the one it shipped with.
+**The winget identifier does not match the command.** The command is `slipcase`
+and the identifier is `Excelano.slipcase-cli`, which is the one coordinate in
+the table that carries a suffix. The plain name belongs to Slipcase Desktop,
+which reaches Windows through the Microsoft Store and is therefore already
+findable as `slipcase`; a CLI submitted under the same name would compete with
+it in the one place a user cannot tell them apart. Everywhere else — the
+command, the apt package, the Homebrew formula, both crates — stays unsuffixed.
+This is the mismatch to get right when running komac: the asset URL carries
+`slipcase-`, and only the identifier carries `-cli`.
 
-   Then update `Cargo.lock` with a build, run `cargo test --workspace --all-features`, rename `CHANGELOG.md`'s `[Unreleased]` heading to `## [0.1.0] - <today>`, and commit. A version with no section in that file publishes empty release notes rather than failing.
+## The version is written twice, and the second one is quiet
 
-2. **Run the conformance corpus.** It is not part of `cargo test`:
+The two crates version in lockstep: one number, one tag, one release. Bump it in
+`version` under `[workspace.package]` and in the `slpc` requirement under
+`[workspace.dependencies]`, which sit adjacent for exactly this reason.
 
-   ```sh
-   cargo build --workspace
-   (cd ../slipcase/conformance && python3 generate.py)
-   cargo run -p corpus -- ../slipcase/conformance
-   ```
+Getting the second wrong fails silently. A caret requirement on the old number
+still resolves, so nothing errors — the published binary simply asks crates.io
+for a library older than the one it shipped with.
 
-   Against the corpus as it is, not a pinned copy. A disagreement stops the release without settling it: the corpus is not normative and the specification wins over both. The runner refuses to report success on a corpus it could not find or whose cases were never generated.
+Rename `CHANGELOG.md`'s `[Unreleased]` heading to `## [0.1.0] - <today>` in the
+same commit. A version with no section in that file publishes empty release
+notes rather than failing.
 
-3. **Check what consumers will see.**
+## The conformance corpus is not part of `cargo test`
 
-   ```sh
-   cargo package -p slpc --list
-   cargo publish -p slpc --dry-run
-   cargo doc --no-deps --all-features --open
-   ```
+Run it before tagging, against the corpus as it is rather than a pinned copy:
 
-   That dry run compiles the packaged copy with **default features only**, and `cargo doc` without `--all-features` hides every item behind one. Build the packaged tree again to cover the rest:
+```sh
+cargo build --workspace
+(cd ../slipcase/conformance && python3 generate.py)
+cargo run -p corpus -- ../slipcase/conformance
+```
 
-   ```sh
-   cargo test --manifest-path <target-dir>/package/slpc-0.1.0/Cargo.toml --all-features
-   ```
+A disagreement stops the release without settling it: the corpus is not
+normative and the specification wins over both. The runner refuses to report
+success on a corpus it could not find or whose cases were never generated.
 
-   Then use the library as a consumer would, before the version is spent:
+## Check what consumers will see
 
-   ```sh
-   cargo new /tmp/consumer && cd /tmp/consumer
-   cargo add slpc --path ~/slipcase/slpc-rust/slpc --features fs
-   ```
+`slpc` is published as a crate in its own right rather than as the binary's
+internals, so it has an audience that none of the binary's channels exercise:
+someone who reads `docs.rs/slpc` and compiles against the packaged tarball.
+Those three commands are what that audience actually receives.
 
-   Write the few lines a caller writes — open a container, report what is in it, write one to a path — and compile them. Reading the signatures is not the same check: how two of them compose is where the defects are.
+```sh
+cargo package -p slpc --list
+cargo publish -p slpc --dry-run
+cargo doc --no-deps --all-features --open
+```
 
-   `cargo publish -p slipcase --dry-run` **cannot run until the library is published**, since it resolves `slpc` from crates.io. That ordering is what the rest of the loop depends on.
+That dry run compiles the packaged copy with **default features only**, and
+`cargo doc` without `--all-features` hides every item behind one. Build the
+packaged tree again to cover the rest:
 
-4. **Verify the Debian package builds.** `cargo deb -p slipcase`, then `dpkg-deb -c` and `dpkg-deb -I` on the result.
+```sh
+cargo test --manifest-path <target-dir>/package/slpc-0.1.0/Cargo.toml --all-features
+```
 
-5. **Check the release plan.** `dist plan` should list five platform archives, the shell and PowerShell installers, the Homebrew formula, and the checksums, naming `slipcase` and never `slpc`.
+Then use the library as a caller would, before the version is spent:
 
-6. **Tag and push.** `git tag v0.1.0 && git push origin main --tags`, which triggers `release.yml` for the archives and the GitHub release, and `publish-crate.yml` for `slpc` and then `slipcase` — that order, because crates.io must already hold the version the binary asks for. A crate already at that version is skipped, so a re-run finishes a half-done publish. Do not run `cargo publish` by hand.
+```sh
+cargo new /tmp/consumer && cd /tmp/consumer
+cargo add slpc --path ~/slipcase/slpc-rust/slpc --features fs
+```
 
-   **Versions are immutable.** `cargo yank` hides a bad release from new resolution; a number is never republished. A fix is a fresh version.
+Write the few lines a caller writes — open a container, report what is in it,
+write one to a path — and compile them. Reading the signatures is not the same
+check: how two of them compose is where the defects are.
 
-7. **Build the .debs.** They do not fire on their own: GitHub does not raise `release: published` for a release cargo-dist created with the default token.
+`cargo publish -p slipcase --dry-run` **cannot run until the library is
+published**, since it resolves `slpc` from crates.io. That ordering is what the
+rest of the loop depends on.
 
-   ```sh
-   gh workflow run deb.yml -f tag=v0.1.0
-   gh run list --limit 5
-   gh release view v0.1.0
-   ```
+## Two checks the workspace layout needs
 
-8. **Ship the .debs to the Excelano apt repository.** The argument is the *repository* name rather than the binary's:
+`cargo deb -p slipcase` builds the package; `dpkg-deb -c` and `dpkg-deb -I` read
+it back. The `-p` is load-bearing — the workspace default is not a package.
 
-   ```sh
-   apt-ship slpc-rust v0.1.0
-   ```
-
-   It pools each `.deb`, prunes to the retention policy, re-signs the indices, previews the rsync, refuses to deploy any deletion the prune did not make, pushes, and verifies against the live index on both architectures.
-
-   **Do not run `apt-ship -n` first.** Its dry run prunes for real, so the deploy after it aborts on deletions that run already made. `anderix/bin#4`. Run it once, with `-y` if unattended.
-
-   **This is the step a release loses**, since nothing downstream depends on apt. `fleet -r` catches it, as an `APT` column reading `behind`; run it afterwards. Nothing to commit in the apt repository — `dists/` and `pool/` are gitignored.
-
-## What is not automated
-
-**Nothing publishes without a tag you pushed.** Both workflows fire on `v*`.
-
-**The crates.io step is token-gated** and skips cleanly without `CRATES_IO_TOKEN`.
+`dist plan` should list five platform archives, the shell and PowerShell
+installers, the Homebrew formula, and the checksums, naming `slipcase` and never
+`slpc`. The library has no binary to ship and must not appear.
 
 ## When a format change is a breaking change
 
-The Rust signatures are the smaller half of this library's interface. The larger half is what counts as a conformant container, and that is `SPEC.md` in `excelano/slipcase`. A change here that accepts or rejects a container differently from before is a bug or a specification change, and goes upstream either way.
+The Rust signatures are the smaller half of this library's interface. The larger
+half is what counts as a conformant container, and that is `SPEC.md` in
+`excelano/slipcase`. A change here that accepts or rejects a container
+differently from before is a bug or a specification change, and goes upstream
+either way.
 
-Within that, widening what the library accepts is a minor bump and narrowing it is breaking, even when no type changed. `slpc/tests/` is the record of what has been promised; a case removed or changed there is the signal to think about the version number.
+Within that, widening what the library accepts is a minor bump and narrowing it
+is breaking, even when no type changed. `slpc/tests/` is the record of what has
+been promised; a case removed or changed there is the signal to think about the
+version number.
 
-**The two halves of that sentence can disagree, and the second one decides.** 0.3.6 narrowed what the library accepts: a container whose metadata member exceeds the bound now reports undetermined where it reported conformant. By the first half that is breaking. By the second nothing moved — `slpc/tests/` gained nine cases and lost none, because no test had ever promised to accept a container the new bound refuses. It shipped as a patch. The rule to take from it is that the promise is what the suite records, not what the implementation happened to do beside it, and that a narrowing which breaks no recorded promise is a fix rather than a break. A narrowing that changes an existing case is the other thing, and that is what the version number is for.
+**The two halves of that sentence can disagree, and the second one decides.**
+0.3.6 narrowed what the library accepts: a container whose metadata member
+exceeds the bound now reports undetermined where it reported conformant. By the
+first half that is breaking. By the second nothing moved — `slpc/tests/` gained
+nine cases and lost none, because no test had ever promised to accept a
+container the new bound refuses. It shipped as a patch. The rule to take from it
+is that the promise is what the suite records, not what the implementation
+happened to do beside it, and that a narrowing which breaks no recorded promise
+is a fix rather than a break. A narrowing that changes an existing case is the
+other thing, and that is what the version number is for.
