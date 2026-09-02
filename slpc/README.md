@@ -1,7 +1,7 @@
 # slpc
 
 The library half of the Rust implementation of
-[slipcase](https://github.com/excelano/slipcase), a container format that
+[slipcase](https://slipcaseformat.org), a container format that
 attaches metadata to a file.
 
 <!-- shared:blurb -->
@@ -172,7 +172,7 @@ The two structural keys have typed accessors. Every other key is passed through
 unexamined, because there is nothing to examine it against.
 
 <!-- shared:authority -->
-The specification lives in `excelano/slipcase` and is the authority on the format.
+The specification lives in [`excelano/slipcase`](https://github.com/excelano/slipcase) and is the authority on the format. <https://slipcaseformat.org> publishes it as pages.
 <!-- /shared:authority -->
 This crate implements it and has no standing to change it. The command-line tool
 built on it is `slipcase`, in the same repository.

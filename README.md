@@ -1,6 +1,6 @@
 # slpc-rust
 
-The Rust implementation of [slipcase](https://github.com/excelano/slipcase), a container format that attaches metadata to a file.
+The Rust implementation of [slipcase](https://slipcaseformat.org), a container format that attaches metadata to a file.
 
 <!-- shared:blurb -->
 A `.slpc` file is a ZIP archive holding a payload file of any type together with a TOML metadata document describing it. The two become one file, so copying, moving, or sending the payload carries its metadata along.
@@ -12,7 +12,7 @@ This repository is a Cargo workspace holding two crates:
 - **`slipcase`** — the command-line tool, built on the library.
 
 <!-- shared:authority -->
-The specification lives in `excelano/slipcase` and is the authority on the format.
+The specification lives in [`excelano/slipcase`](https://github.com/excelano/slipcase) and is the authority on the format. <https://slipcaseformat.org> publishes it as pages.
 <!-- /shared:authority -->
 This is a reference implementation: it exists to show that the specification is implementable and to be checked against it.
 

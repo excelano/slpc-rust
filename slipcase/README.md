@@ -1,6 +1,6 @@
 # slipcase
 
-The command-line tool for [slipcase](https://github.com/excelano/slipcase), a
+The command-line tool for [slipcase](https://slipcaseformat.org), a
 container format that attaches metadata to a file.
 
 <!-- shared:blurb -->
@@ -103,7 +103,7 @@ Exit codes tell success from bad input, from a bad command line, from a containe
 The library this is built on is [`slpc`](https://crates.io/crates/slpc), in the
 same repository. 
 <!-- shared:authority -->
-The specification lives in `excelano/slipcase` and is the authority on the format.
+The specification lives in [`excelano/slipcase`](https://github.com/excelano/slipcase) and is the authority on the format. <https://slipcaseformat.org> publishes it as pages.
 <!-- /shared:authority -->
 
 ## License
