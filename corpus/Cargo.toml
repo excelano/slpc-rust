@@ -1,6 +1,6 @@
 [package]
 name = "corpus"
-description = "Run the slipcase conformance corpus against this workspace"
+description = "Run the Slipcase conformance corpus against this workspace"
 # Never published and never released, so it has no version to carry. It is in
 # the workspace to be built and run, not to be shipped: `dist-workspace.toml`
 # names its members explicitly and this is not one of them.

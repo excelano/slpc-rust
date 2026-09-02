@@ -1,6 +1,6 @@
 [package]
 name = "fuzz"
-description = "Throw malformed bytes at the slipcase reader and watch what it does"
+description = "Throw malformed bytes at the Slipcase reader and watch what it does"
 # Never published and never released, for the reason `corpus` is not: it exists
 # to be run, and `dist-workspace.toml` names its members explicitly.
 version = "0.0.0"

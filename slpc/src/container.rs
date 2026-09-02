@@ -117,7 +117,7 @@ pub(crate) fn locate(entries: &[Entry], names: &[central::Recorded], want: &str)
     }
 }
 
-/// A slipcase container, open for reading.
+/// A Slipcase container, open for reading.
 ///
 /// Reading needs `Read + Seek`, because a ZIP's central directory is at the end
 /// of the file and there is no way to find a member without first finding that.
@@ -301,7 +301,7 @@ impl<R: Read + Seek> Container<R> {
     /// Read from the central directory alongside the size, so this decompresses
     /// nothing and costs no more than asking.
     ///
-    /// **A ZIP field and not a slipcase one.** SPEC 5 defines no checksum or
+    /// **A ZIP field and not a Slipcase one.** SPEC 5 defines no checksum or
     /// fixity key, and this is not one arriving by another road. It is the
     /// value a ZIP writer computes over a member as it stores it and a ZIP
     /// reader verifies on the way back out, and it is recorded in every

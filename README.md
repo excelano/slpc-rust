@@ -1,6 +1,6 @@
 # slpc-rust
 
-The Rust implementation of [slipcase](https://slipcaseformat.org), a container format that attaches metadata to a file.
+The Rust implementation of [Slipcase](https://slipcaseformat.org), a container format that attaches metadata to a file.
 
 <!-- shared:blurb -->
 A `.slpc` file is a ZIP archive holding a payload file of any type together with a TOML metadata document describing it. The two become one file, so copying, moving, or sending the payload carries its metadata along.

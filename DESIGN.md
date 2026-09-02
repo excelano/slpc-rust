@@ -2,14 +2,14 @@
 
 **Status:** built and released. Which version is current, and what shipped with it, live in the git tags and on crates.io, which is where they stay right without anyone editing this file.
 **Document version:** 2026-08-20
-**Implements:** slipcase specification 1.0
+**Implements:** Slipcase specification 1.0
 **Section references:** `SPEC §2.3` is the specification in `excelano/slipcase`; a bare `§4.3` is this document. The two number their sections independently and both have a §3 and a §5, so neither is safe to read from context.
 
 ---
 
 ## 1. What this repository is
 
-The Rust implementation of the slipcase container format: a library and a command-line tool, in one Cargo workspace.
+The Rust implementation of the Slipcase container format: a library and a command-line tool, in one Cargo workspace.
 
 - `slpc` — the library crate. Reads, writes, and validates containers.
 - `slipcase` — the binary crate. A CLI over the library.

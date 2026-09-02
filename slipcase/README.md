@@ -1,6 +1,6 @@
 # slipcase
 
-The command-line tool for [slipcase](https://slipcaseformat.org), a
+The command-line tool for [Slipcase](https://slipcaseformat.org), a
 container format that attaches metadata to a file.
 
 <!-- shared:blurb -->

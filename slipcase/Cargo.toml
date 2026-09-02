@@ -1,7 +1,7 @@
 [package]
 name = "slipcase"
-description = "Pack, unpack, repack, inspect, and validate slipcase containers: a ZIP holding a payload file and the TOML metadata that describes it"
-homepage = "https://github.com/excelano/slipcase"
+description = "Pack, unpack, repack, inspect, and validate Slipcase containers: a ZIP holding a payload file and the TOML metadata that describes it"
+homepage = "https://slipcaseformat.org"
 readme = "README.md"
 
 # `testsupport` is a path dev-dependency, and `cargo package` strips a path

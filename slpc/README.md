@@ -1,7 +1,7 @@
 # slpc
 
 The library half of the Rust implementation of
-[slipcase](https://slipcaseformat.org), a container format that
+[Slipcase](https://slipcaseformat.org), a container format that
 attaches metadata to a file.
 
 <!-- shared:blurb -->
