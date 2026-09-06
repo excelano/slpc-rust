@@ -36,7 +36,7 @@ The two crates version in lockstep, the CLI being a thin shell over the library.
 
 The format is ZIP plus TOML, and both have mature pure-Rust libraries. The implementation writes neither.
 
-**Pure Rust, no C dependencies**, including transitive ones pulled in by optional features. The zip and compression crates ship optional backends that link C libraries; those stay off, and the build must cross-compile with nothing installed but a Rust toolchain.
+**Pure Rust, no C dependencies**, including transitive ones pulled in by optional features. That is this library's rule; across the fleet it is a preference, held in `~/notes/pure_rust_preference.md`. The zip and compression crates ship optional backends that link C libraries; those stay off, and the build must cross-compile with nothing installed but a Rust toolchain.
 
 - **ZIP** — `zip`, with `default-features = false` and `features = ["deflate-flate2-zlib-rs"]`. Its defaults link libbz2 and libzstd through `bzip2-sys` and `zstd-sys`, and the plain `deflate` feature pulls `zopfli` and three more crates for a compression level nothing here uses. What remains is fifteen crates with no C among them, and `cargo check` succeeds for `x86_64-pc-windows-msvc` on a machine carrying no MSVC toolchain.
 - **TOML** — `toml_edit`, which implements TOML 1.1.0 as the specification requires. The specification requires preserving keys an implementation does not recognize, and deserializing into a struct drops them. A document model preserves comments, key order, and whitespace as well.
