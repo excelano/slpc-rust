@@ -40,7 +40,16 @@ cargo install slipcase
 
 ### Windows
 
-In PowerShell:
+```powershell
+winget install Excelano.slipcase-cli
+```
+
+The identifier carries `-cli` and the command does not: what lands on the path
+is `slipcase`. `winget install slipcase` reaches Slipcase Desktop, the viewer
+and metadata editor, which is a different program that opens containers rather
+than a command that makes them.
+
+Without winget, in PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://github.com/excelano/slpc-rust/releases/latest/download/slipcase-installer.ps1 | iex"
