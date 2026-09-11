@@ -8,7 +8,7 @@ Please do not open public issues for security problems.
 
 ## Supported versions
 
-The latest 0.x release receives security fixes. Older versions are not supported.
+The latest release receives security fixes. Older versions are not supported.
 
 ## What slipcase can access
 
@@ -26,7 +26,7 @@ A few things are worth stating because they are the ones a container format coul
 
 **A payload is never executed, opened, or handed to another program.** The tool has no verb that runs anything. Nothing here inspects a payload's type or acts on it, and a container that names its payload `report.pdf` gets no different treatment from one that names it `setup.exe`.
 
-**Identifying a container is bounded, from 0.3.6, and this paragraph used to say it needed no bound.** It held that resource limits belong to `zip` and `toml_edit` and apply equally to every other consumer of those crates. That is true of the payload, which nothing inflates until you ask. It was never true of the metadata member: deciding whether a file is a container means decompressing that member and parsing it as TOML, so the memory is spent before anything about the file is known, which is not the position of a general ZIP consumer who chooses what to extract. Measured before the fix, a 204,151-byte container cost 620 MB of memory and was reported conformant. The metadata member is now bounded — 16 MiB by default, adjustable through `Limits` — and a container over the bound is reported as undetermined rather than as non-conformant, because the bound belongs to the reader and not to the file.
+**Identifying a container is bounded, from 0.3.6, and this paragraph used to say it needed no bound.** It held that resource limits belong to `zip` and `toml_edit` and apply equally to every other consumer of those crates. That is true of the payload, which nothing inflates until you ask. It was never true of the metadata member: deciding whether a file is a container means decompressing that member and parsing it as TOML, so the memory is spent before anything about the file is known, which is not the position of a general ZIP consumer who chooses what to extract. Measured before the fix, a 204,151-byte container cost 620 MB of memory and was reported conformant. The metadata member is now bounded — 1 MiB by default, adjustable through `Limits` — and a container over the bound is reported as undetermined rather than as non-conformant, because the bound belongs to the reader and not to the file.
 
 **A payload name is escaped before it is shown to you.** The specification permits the Unicode bidirectional formatting characters in `payload.file`, because they are legal filenames everywhere and excluding them would make the name rules a table of special cases. A payload called `report<U+202E>fdp.exe` therefore reads as `report.pdf` in any terminal that applies the override. `slipcase validate` escapes it, and `slipcase info` escapes it when it is writing to a terminal — when it is redirected into a file or a pipe it still reproduces the metadata member byte for byte, since that is what a caller redirecting it asked for.
 
