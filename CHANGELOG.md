@@ -513,7 +513,7 @@ which is a two-line change and more tempting now that `payload_mode` exists.
 - **A conformance corpus runner**, `corpus/`, which is not published and not
   part of `cargo test`. It checks both the verdict the library reaches and the
   exit code the tool returns against every case in the corpus from
-  `excelano/slipcase`, and it is a step in `RELEASING.md` rather than a test,
+  `excelano/slipcase`, and it is a step in the release record rather than a test,
   because it needs that repository checked out and a Python interpreter to
   generate the cases.
 

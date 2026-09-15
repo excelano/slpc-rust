@@ -9,7 +9,7 @@ readme = "README.md"
 # use it then reference a crate the manifest no longer declares, so
 # `cargo test --all-features` inside the packaged tree fails to compile — which
 # is what anybody vendoring or auditing this crate runs. Shipped that way in
-# 0.3.5 and caught by RELEASING.md step 3 before 0.3.6.
+# 0.3.5 and caught by the release record before 0.3.6.
 #
 # Excluded rather than inlined. The helper marks a file the way a platform's
 # downloader marks one, and it is shared precisely because it was written twice
