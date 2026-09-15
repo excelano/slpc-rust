@@ -10,9 +10,9 @@
 //! Not a test. It needs the specification repository checked out and its cases
 //! generated, neither of which `cargo test` implies, and a test that has to
 //! choose between skipping quietly and failing on a machine that was never
-//! going to have those things is worse than a command run on purpose. It is a
-//! step in the release record, because passing the corpus is a claim about a version
-//! that shipped rather than about a commit.
+//! going to have those things is worse than a command run on purpose. Run it
+//! against a version that is about to ship: passing the corpus is a claim about
+//! a release rather than about a commit.
 //
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
