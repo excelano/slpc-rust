@@ -58,24 +58,6 @@ is `slipcase`. `winget install slipcase` reaches Slipcase Desktop, the viewer
 and metadata editor, which is a different program that opens containers rather
 than a command that makes them.
 
-Without winget, in PowerShell:
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://github.com/excelano/slpc-rust/releases/latest/download/slipcase-installer.ps1 | iex"
-```
-
-### Curl (any Linux or macOS)
-
-```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/excelano/slpc-rust/main/install.sh | sh
-```
-
-To remove it: swap `install.sh` for `uninstall.sh` in that line.
-
-Every release also carries plain archives — macOS and Linux on both Intel and
-ARM, Windows on Intel — each with a `.sha256` beside it.
-<!-- /shared:install -->
-
 ## The tool
 
 <!-- shared:verbs -->
