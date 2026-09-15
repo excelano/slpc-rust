@@ -1,7 +1,7 @@
 # Dependabot keeps Cargo and GitHub Actions dependencies current so security
 # fixes show up as PRs rather than slipping past.
 #
-# Each ecosystem's bumps are grouped into a single weekly PR so they share one
+# Each ecosystem's bumps are grouped into a single monthly PR so they share one
 # lockfile change instead of stacking conflicting updates.
 #
 # A `zip` bump is the one to read rather than merge on green: it sets this
@@ -12,7 +12,7 @@ updates:
   - package-ecosystem: cargo
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
@@ -23,7 +23,7 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci"
