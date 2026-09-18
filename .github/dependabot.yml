@@ -16,7 +16,17 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
+    # `zip` goes in a group of its own so it arrives as its own pull request,
+    # on a `dependabot/cargo/review-*` branch. The organisation's sweep merges
+    # what is green and skips that branch by name, which is what keeps the
+    # paragraph above true now that merging is automatic: a bump meant to be
+    # read is held rather than landed while nobody is looking. Dependabot fills
+    # the first group a dependency matches, so the catch-all below still takes
+    # everything else.
     groups:
+      review:
+        patterns:
+          - "zip"
       cargo:
         patterns:
           - "*"
