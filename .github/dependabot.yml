@@ -1,35 +1,13 @@
-# Dependabot keeps Cargo and GitHub Actions dependencies current so security
-# fixes show up as PRs rather than slipping past.
+# Dependabot keeps this repository's GitHub Actions current, so a security fix
+# arrives as a pull request rather than slipping past. The bumps are grouped
+# into one pull request so they land together.
 #
-# Each ecosystem's bumps are grouped into a single monthly PR so they share one
-# lockfile change instead of stacking conflicting updates.
-#
-# A `zip` bump is the one to read rather than merge on green: it sets this
-# workspace's minimum supported Rust version, so raising it is a change to what
-# this crate promises its consumers. See the comment in Cargo.toml.
+# Package versions are not Dependabot's work here. `ship` runs the language's
+# own update as a release step, which puts the decision at the moment the tree
+# is being looked at anyway, and keeps what a release ships current as of that
+# release. Security alerts are a separate switch and stay on.
 version: 2
 updates:
-  - package-ecosystem: cargo
-    directory: "/"
-    schedule:
-      interval: monthly
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: "deps"
-    # `zip` goes in a group of its own so it arrives as its own pull request,
-    # on a `dependabot/cargo/review-*` branch. The organisation's sweep merges
-    # what is green and skips that branch by name, which is what keeps the
-    # paragraph above true now that merging is automatic: a bump meant to be
-    # read is held rather than landed while nobody is looking. Dependabot fills
-    # the first group a dependency matches, so the catch-all below still takes
-    # everything else.
-    groups:
-      review:
-        patterns:
-          - "zip"
-      cargo:
-        patterns:
-          - "*"
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
