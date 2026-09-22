@@ -43,8 +43,23 @@ jobs:
           # run, so re-running after a half-finished publish finishes the job
           # instead of stopping on `already exists`. Versions are immutable;
           # nothing here can overwrite one.
+          #
+          # Checked against the sparse index rather than the
+          # /api/v1/crates/<crate>/<version> REST endpoint: that endpoint
+          # lagged the real index by enough to report a crate missing that
+          # cargo publish then correctly refused as already there (slpc
+          # 0.4.0, 2026-09-22). The sparse index is what cargo itself
+          # resolves against, so it does not have that lag.
           for crate in slpc slipcase; do
-            if curl -sfL "https://crates.io/api/v1/crates/$crate/$version" -o /dev/null; then
+            # crates.io's sparse index path by name length: 1 -> 1/name,
+            # 2 -> 2/name, 3 -> 3/first-char/name, 4+ -> first-two/next-two/name.
+            len=${#crate}
+            if [ "$len" -eq 1 ]; then path="1/$crate"
+            elif [ "$len" -eq 2 ]; then path="2/$crate"
+            elif [ "$len" -eq 3 ]; then path="3/${crate:0:1}/$crate"
+            else path="${crate:0:2}/${crate:2:2}/$crate"
+            fi
+            if curl -sfL "https://index.crates.io/$path" | grep -q "\"vers\":\"$version\""; then
               echo "$crate $version is already on crates.io, skipping"
             else
               # cargo publish waits for the index to catch up before returning,
