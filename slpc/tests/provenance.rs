@@ -1,5 +1,5 @@
 // What the platform records about where a container came from, carried onto
-// the payload taken out of it.
+// the content file taken out of it.
 //
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
@@ -13,7 +13,7 @@ fn sandbox() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
 
-/// **The defect this catches is the one the module exists for**: a payload
+/// **The defect this catches is the one the module exists for**: a content file
 /// taken out of a downloaded container reaching whatever opens it next as
 /// something this machine made, with the warning its origin earned never
 /// shown. Break `carry` to return `Mark::Silent` without writing anything and
@@ -24,12 +24,12 @@ fn sandbox() -> tempfile::TempDir {
 /// not something this code can answer for. Announced rather than passed
 /// quietly, so a run that proved nothing does not read like one that did.
 #[test]
-fn a_downloaded_container_puts_its_origin_on_the_payload() {
+fn a_downloaded_container_puts_its_origin_on_the_content() {
     let dir = sandbox();
     let container = dir.path().join("downloaded.slpc");
-    let payload = dir.path().join("report.pdf");
+    let content = dir.path().join("report.pdf");
     std::fs::write(&container, b"container").unwrap();
-    std::fs::write(&payload, b"payload").unwrap();
+    std::fs::write(&content, b"content").unwrap();
 
     if !mark_as_downloaded(&container) {
         eprintln!("skipped: this filesystem will not hold a provenance mark");
@@ -40,32 +40,32 @@ fn a_downloaded_container_puts_its_origin_on_the_payload() {
         "the test could not mark the container it is about to carry from"
     );
 
-    let mark = carry(&container, &payload).expect("carrying");
+    let mark = carry(&container, &content).expect("carrying");
     assert!(
         matches!(mark, Mark::Carried | Mark::Noted),
-        "a downloaded container carried nothing onto its payload: {mark:?}"
+        "a downloaded container carried nothing onto its content file: {mark:?}"
     );
     assert!(
-        arrived_from_elsewhere(&payload),
-        "the payload does not say it came from anywhere, so unpacking laundered it"
+        arrived_from_elsewhere(&content),
+        "the content file does not say it came from anywhere, so unpacking laundered it"
     );
 }
 
 /// The defect this catches is the repair above going too far and marking
-/// everything. A mark that appears on every payload says nothing, and a warning
+/// everything. A mark that appears on every content file says nothing, and a warning
 /// a person sees on every file is one they learn to dismiss.
 #[test]
 fn a_container_from_nowhere_marks_nothing() {
     let dir = sandbox();
     let container = dir.path().join("made-here.slpc");
-    let payload = dir.path().join("report.pdf");
+    let content = dir.path().join("report.pdf");
     std::fs::write(&container, b"container").unwrap();
-    std::fs::write(&payload, b"payload").unwrap();
+    std::fs::write(&content, b"content").unwrap();
 
-    assert_eq!(carry(&container, &payload).expect("carrying"), Mark::Silent);
+    assert_eq!(carry(&container, &content).expect("carrying"), Mark::Silent);
     assert!(
-        !arrived_from_elsewhere(&payload),
-        "a payload from a container made here was reported as arriving from elsewhere"
+        !arrived_from_elsewhere(&content),
+        "a content file from a container made here was reported as arriving from elsewhere"
     );
 }
 
@@ -75,38 +75,38 @@ fn a_container_from_nowhere_marks_nothing() {
 /// a platform that gates on a mark the answer must be an error.
 ///
 /// Linux is exempt and says so: nothing there consults a mark before opening a
-/// file, so refusing a payload over a note nothing reads would be theatre, and
+/// file, so refusing a content file over a note nothing reads would be theatre, and
 /// `Mark::Noted` is the separate answer that keeps the two from being confused.
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn a_copy_that_could_not_be_gated_is_a_failure() {
     let dir = sandbox();
     let container = dir.path().join("downloaded.slpc");
-    let payload = dir.path().join("report.pdf");
+    let content = dir.path().join("report.pdf");
     std::fs::write(&container, b"container").unwrap();
-    std::fs::write(&payload, b"payload").unwrap();
+    std::fs::write(&content, b"content").unwrap();
 
     if !mark_as_downloaded(&container) {
         eprintln!("skipped: this filesystem will not hold a provenance mark");
         return;
     }
 
-    let mut mode = std::fs::metadata(&payload).unwrap().permissions();
+    let mut mode = std::fs::metadata(&content).unwrap().permissions();
     mode.set_readonly(true);
-    std::fs::set_permissions(&payload, mode).unwrap();
+    std::fs::set_permissions(&content, mode).unwrap();
 
-    let outcome = carry(&container, &payload);
+    let outcome = carry(&container, &content);
 
     // Put back before asserting: a read-only file survives the cleanup that a
     // failing test never reaches.
-    let mut mode = std::fs::metadata(&payload).unwrap().permissions();
+    let mut mode = std::fs::metadata(&content).unwrap().permissions();
     #[allow(clippy::permissions_set_readonly_false)]
     mode.set_readonly(false);
-    std::fs::set_permissions(&payload, mode).unwrap();
+    std::fs::set_permissions(&content, mode).unwrap();
 
     assert!(
         outcome.is_err(),
-        "a payload that could not be gated was reported as carried, which is \
+        "a content that could not be gated was reported as carried, which is \
          the laundering this module exists to prevent"
     );
 }
@@ -116,11 +116,11 @@ fn a_copy_that_could_not_be_gated_is_a_failure() {
 /// The defect this catches was live from the day `Destination::in_place`
 /// existed until 2026-08-27, and it is the module's own subject arriving by a
 /// door nobody watched. `in_place` replaces a file by renaming a fresh one over
-/// it, and a fresh file carries no mark — so editing the metadata of a
+/// it, and a fresh file carries no mark — so editing the flyleaf of a
 /// downloaded container and saving stripped whatever the platform had recorded
 /// about where it came from. Measured before the fix: a container marked as
-/// downloaded came back from `slipcase repack --meta` with no mark at all, and
-/// every payload extracted from it afterwards was unmarked too, because
+/// downloaded came back from `slipcase repack --flyleaf` with no mark at all, and
+/// every content file extracted from it afterwards was unmarked too, because
 /// `carry` copies from the container.
 ///
 /// Break the carry in `commit` and this fails at the second assertion.

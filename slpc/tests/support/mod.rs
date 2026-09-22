@@ -2,7 +2,7 @@
 //
 // The suite generates every fixture it uses, so it runs on a fresh clone with
 // no network and nothing binary is checked in. A writer that could produce a
-// CP437 member name, a name flagged UTF-8 that is not UTF-8, or a payload
+// CP437 member name, a name flagged UTF-8 that is not UTF-8, or a content file
 // declaring a compression method this build lacks would be a writer with bugs,
 // so those archives are stamped here instead.
 //
@@ -154,33 +154,33 @@ pub fn raw_zip(members: &[Member]) -> Vec<u8> {
     out
 }
 
-/// The smallest conformant metadata document.
+/// The smallest conformant flyleaf document.
 ///
 /// The name goes into a TOML basic string, so a backslash or a quote in it is
 /// escaped here. A fixture that writes a bad name is testing the library, and a
 /// fixture that writes bad TOML by accident is testing nothing.
-pub fn metadata(payload_file: &str) -> String {
-    let escaped: String = payload_file
+pub fn flyleaf(content_file: &str) -> String {
+    let escaped: String = content_file
         .chars()
         .map(|c| match c {
             '\\' => "\\\\".to_string(),
             '"' => "\\\"".to_string(),
             // A control character cannot sit raw in a TOML basic string, so a
-            // real container carrying one in payload.file escapes it and the
+            // real container carrying one in content.file escapes it and the
             // fixture has to as well. The name still holds the character; only
             // its spelling in the document changes.
             c if c.is_ascii() && c.is_control() => format!("\\u{:04X}", c as u32),
             c => c.to_string(),
         })
         .collect();
-    format!("slipcase_version = \"1.0\"\n\n[payload]\nfile = \"{escaped}\"\n")
+    format!("slipcase_version = \"1.1\"\n\n[content]\nfile = \"{escaped}\"\n")
 }
 
-/// A container holding one stored payload and nothing else.
-pub fn container(payload_file: &str, payload: &[u8]) -> Vec<u8> {
+/// A container holding one stored content file and nothing else.
+pub fn container(content_file: &str, content: &[u8]) -> Vec<u8> {
     raw_zip(&[
-        Member::new(slpc::METADATA_MEMBER, metadata(payload_file).as_bytes()),
-        Member::new(payload_file, payload),
+        Member::new(slpc::FLYLEAF_MEMBER, flyleaf(content_file).as_bytes()),
+        Member::new(content_file, content),
     ])
 }
 
@@ -189,12 +189,12 @@ pub fn open(bytes: &[u8]) -> slpc::Result<slpc::Container<std::io::Cursor<Vec<u8
     slpc::Container::read(std::io::Cursor::new(bytes.to_vec()))
 }
 
-/// Read a payload out whole, for comparison.
+/// Read a content file out whole, for comparison.
 ///
 /// Both test files want this, so it lives here rather than in each of them.
-pub fn payload_of(c: &mut slpc::Container<std::io::Cursor<Vec<u8>>>) -> Vec<u8> {
+pub fn content_of(c: &mut slpc::Container<std::io::Cursor<Vec<u8>>>) -> Vec<u8> {
     use std::io::Read;
     let mut got = Vec::new();
-    c.payload().unwrap().read_to_end(&mut got).unwrap();
+    c.content().unwrap().read_to_end(&mut got).unwrap();
     got
 }

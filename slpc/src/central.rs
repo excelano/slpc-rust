@@ -3,7 +3,7 @@
 //
 // `ZipArchive` keys its directory by name, so two members sharing a name arrive
 // as one and `len()` counts them once. SPEC 2.1 requires exactly one member
-// named `slipcase.metadata.toml` and exactly one matching `payload.file`, which
+// named `slipcase.flyleaf.toml` and exactly one matching `content.file`, which
 // means counting them, which means reading the directory ourselves. Nothing
 // else here duplicates the crate: members are still located and read through
 // it, and this only ever counts.
@@ -35,7 +35,7 @@ pub(crate) struct Recorded {
     /// invented: for an archive made on DOS with no high bits it returns
     /// `S_IFREG | 0o664`, and for a read-only one `0o444`. Both are answers to
     /// a question the container never answered, and
-    /// [`Container::payload_mode`](crate::Container::payload_mode) has to be
+    /// [`Container::content_mode`](crate::Container::content_mode) has to be
     /// silent there rather than confident.
     pub external_attributes: u32,
 }
@@ -193,7 +193,7 @@ fn renaming_extra_field(extra: &[u8]) -> Option<u16> {
 /// central directory twice — here, to count names the crate cannot see, and in
 /// the crate itself, for every byte anything actually reads. Where the two
 /// resolve *different* directories, the uniqueness SPEC 2.1 requires is
-/// established over one set of members and the payload is served from another,
+/// established over one set of members and the content file is served from another,
 /// which is the shape of Android's Master Key bug and is what SPEC 3's
 /// enumeration rule exists to prevent. Measured on 2026-08-27, three separate
 /// fields could be made to split them, so the answer is not to chase the crate's
@@ -228,7 +228,7 @@ fn directory_location<R: Read + Seek>(reader: &mut R) -> Result<(u64, u64)> {
     // apart they are a lever: this function used to take the total and the ZIP
     // crate takes the count on this disk, so an archive declaring 3 and 2 was
     // counted here as two members and served by the crate as three — a
-    // duplicate payload smuggled past a conformant verdict.
+    // duplicate content file smuggled past a conformant verdict.
     if here != count {
         return Err(Malformed::NotAnArchive(format!(
             "the end of central directory record says {here} entries on this disk and {count} in total; a container is a single-disk archive"
@@ -245,7 +245,7 @@ fn directory_location<R: Read + Seek>(reader: &mut R) -> Result<(u64, u64)> {
     // The record has to be the last thing in the file, its comment included.
     // Without this the *last* signature wins here while the ZIP crate, which
     // checks the comment length and keeps looking, falls back to an earlier
-    // record — two directories, two payloads, one verdict. Refusing rather than
+    // record — two directories, two contents, one verdict. Refusing rather than
     // falling back too: a file with a second end-of-central-directory record
     // that does not add up is one whose contents depend on who is reading, and
     // SPEC 2.1 has already taken that decision about duplicate names and about
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn a_name_flagged_utf8_that_is_not_utf8_equals_nothing() {
         // The ZIP crate would hand back U+FFFD here. A name with no decoding
-        // must match no `payload.file`, which is always a real string, or two
+        // must match no `content.file`, which is always a real string, or two
         // members could collapse to one and the answer would depend on the
         // order they sit in.
         let bad = utf8(b"caf\xff.txt");

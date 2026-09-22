@@ -10,7 +10,7 @@ use toml_edit::DocumentMut;
 use zip::ZipArchive;
 
 use crate::error::{EntryKind, Error, Malformed, Result, Unsupported};
-use crate::{central, metadata, name, Limits, METADATA_MEMBER, VERSION};
+use crate::{central, flyleaf, name, Limits, FLYLEAF_MEMBER, VERSION};
 
 /// One member of the central directory, as far as this library cares.
 ///
@@ -68,7 +68,7 @@ fn entries_of<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<Vec<Entry>>
 /// features, so a method the build was not given arrives as `Unsupported`
 /// carrying the number the archive stated. That is the test the crate itself
 /// makes before it builds a decoder, which is what keeps
-/// [`Container::check_payload_readable`] from answering differently from
+/// [`Container::check_content_readable`] from answering differently from
 /// extraction.
 #[allow(deprecated)]
 fn unsupported_method(method: zip::CompressionMethod) -> Option<u16> {
@@ -125,17 +125,17 @@ pub struct Container<R> {
     pub(crate) archive: ZipArchive<R>,
     pub(crate) entries: Vec<Entry>,
     /// Every central directory name, duplicates included, for the counting the
-    /// ZIP crate cannot do. Kept so a rewrite can check the metadata it is
+    /// ZIP crate cannot do. Kept so a rewrite can check the flyleaf it is
     /// about to write against the same archive.
     pub(crate) names: Vec<central::Recorded>,
-    pub(crate) metadata_index: usize,
+    pub(crate) flyleaf_index: usize,
     doc: DocumentMut,
     bytes: Vec<u8>,
     version: String,
-    payload_file: String,
+    content_file: String,
     /// `None` when `slipcase_version` is one this build does not implement, in
-    /// which case the payload was never located. See [`Container::payload`].
-    pub(crate) payload_index: Option<usize>,
+    /// which case the content file was never located. See [`Container::content`].
+    pub(crate) content_index: Option<usize>,
 }
 
 impl Container<std::fs::File> {
@@ -158,20 +158,20 @@ impl Container<std::fs::File> {
 impl<R: Read + Seek> Container<R> {
     /// Read a container from anything seekable.
     ///
-    /// Reads the central directory and the metadata member, and nothing else.
-    /// The payload is not decompressed and not read, so a container whose
-    /// payload uses a compression method this build lacks still opens.
+    /// Reads the central directory and the flyleaf member, and nothing else.
+    /// The content file is not decompressed and not read, so a container whose
+    /// content file uses a compression method this build lacks still opens.
     pub fn read(reader: R) -> Result<Self> {
         Self::read_with(reader, Limits::default())
     }
 
-    /// Read a container, spending no more on the metadata member than `limits`
+    /// Read a container, spending no more on the flyleaf member than `limits`
     /// allows.
     ///
     /// SPEC 6: identifying a container means decompressing and parsing that
     /// member, so a reader commits the memory before it knows whether the file
     /// was a container. A member over the bound is
-    /// [`Unsupported::MetadataTooLarge`], which is
+    /// [`Unsupported::FlyleafTooLarge`], which is
     /// [`Undetermined`](crate::Verdict::Undetermined) and not a verdict against
     /// the file.
     pub fn read_with(mut reader: R, limits: Limits) -> Result<Self> {
@@ -186,31 +186,31 @@ impl<R: Read + Seek> Container<R> {
 
         let entries = entries_of(&mut archive)?;
 
-        let meta_index = match locate(&entries, &names, METADATA_MEMBER) {
+        let flyleaf_index = match locate(&entries, &names, FLYLEAF_MEMBER) {
             Located::One(i) => i,
-            Located::None => return Err(Malformed::NoMetadataMember.into()),
-            Located::Several(n) => return Err(Malformed::DuplicateMetadataMember(n).into()),
+            Located::None => return Err(Malformed::NoFlyleafMember.into()),
+            Located::Several(n) => return Err(Malformed::DuplicateFlyleafMember(n).into()),
         };
 
-        // Buffering here is deliberate and is not the rule the payload lives
+        // Buffering here is deliberate and is not the rule the content file lives
         // under: every caller of this library wants all of this member. What it
         // is not is small, which this said until it was measured — see
-        // `read_metadata_member`.
+        // `read_flyleaf_member`.
         let bytes =
-            read_metadata_member(&mut archive, meta_index, entries[meta_index].size, limits)?;
+            read_flyleaf_member(&mut archive, flyleaf_index, entries[flyleaf_index].size, limits)?;
 
-        let (doc, keys) = metadata::parse(&bytes)?;
-        let crate::metadata::Keys {
+        let (doc, keys) = flyleaf::parse(&bytes)?;
+        let crate::flyleaf::Keys {
             version,
-            payload_file,
+            content_file,
         } = keys;
 
-        // Everything past this point is a rule stated by version 1.0 of the
+        // Everything past this point is a rule stated by version 1.1 of the
         // specification. A container declaring a version this build does not
         // implement is parsed and reported and no further, because SPEC 3
         // forbids assuming its rules are the ones written here.
-        let payload_index = if version == VERSION {
-            Some(locate_payload(&entries, &names, &payload_file)?)
+        let content_index = if version == VERSION {
+            Some(locate_content(&entries, &names, &content_file)?)
         } else {
             None
         };
@@ -219,84 +219,84 @@ impl<R: Read + Seek> Container<R> {
             archive,
             entries,
             names,
-            metadata_index: meta_index,
+            flyleaf_index,
             doc,
             bytes,
             version,
-            payload_file,
-            payload_index,
+            content_file,
+            content_index,
         })
     }
 
     /// The `slipcase_version` as written.
     ///
-    /// This and [`Container::payload_name`] describe the container as it was
-    /// read. Editing the document through [`Container::metadata_mut`] does not
+    /// This and [`Container::content_name`] describe the container as it was
+    /// read. Editing the document through [`Container::flyleaf_mut`] does not
     /// change them; the edited document is validated when it is written back.
     pub fn version(&self) -> &str {
         &self.version
     }
 
-    /// The value of `payload.file`.
-    pub fn payload_name(&self) -> &str {
-        &self.payload_file
+    /// The value of `content.file`.
+    pub fn content_name(&self) -> &str {
+        &self.content_file
     }
 
     /// The whole TOML document, unknown keys intact.
-    pub fn metadata(&self) -> &DocumentMut {
+    pub fn flyleaf(&self) -> &DocumentMut {
         &self.doc
     }
 
     /// The whole TOML document, to be changed in place.
-    pub fn metadata_mut(&mut self) -> &mut DocumentMut {
+    pub fn flyleaf_mut(&mut self) -> &mut DocumentMut {
         &mut self.doc
     }
 
-    /// The metadata member as stored, byte for byte.
+    /// The flyleaf member as stored, byte for byte.
     ///
     /// For a caller who wants a different parser, a schema validator, or a
     /// hash. Nothing else here promises to reproduce these bytes: TOML defines
     /// no canonical serialization, so re-serializing the document is not the
     /// same operation.
-    pub fn metadata_bytes(&self) -> &[u8] {
+    pub fn flyleaf_bytes(&self) -> &[u8] {
         &self.bytes
     }
 
     /// Whether `slipcase_version` is one this build implements.
     pub(crate) fn version_is_recognised(&self) -> bool {
-        self.payload_index.is_some()
+        self.content_index.is_some()
     }
 
-    /// The payload's length, uncompressed.
+    /// The content file's length, uncompressed.
     ///
     /// Read from the central directory, which already carries it, so this
     /// decompresses nothing and costs no more than asking. For a caller sizing
-    /// a progress bar, deciding whether a payload fits somewhere, or reporting
+    /// a progress bar, deciding whether a content file fits somewhere, or reporting
     /// what is in a container without extracting it.
     ///
-    /// Fails the way [`Container::payload`] does for a container declaring a
-    /// version this build does not implement, since in that case the payload
+    /// Fails the way [`Container::content`] does for a container declaring a
+    /// version this build does not implement, since in that case the content file
     /// was never located.
     ///
-    /// Borrows shared rather than mutably, unlike [`Container::payload`], so it
-    /// composes with [`Container::payload_name`] in one expression — which is
+    /// Borrows shared rather than mutably, unlike [`Container::content`], so it
+    /// composes with [`Container::content_name`] in one expression — which is
     /// how anything reporting what is in a container asks the question:
     ///
     /// ```no_run
     /// # fn main() -> slpc::Result<()> {
     /// let c = slpc::Container::open("report.pdf.slpc")?;
-    /// println!("{} is {} bytes", c.payload_name(), c.payload_size()?);
+    /// println!("{} is {} bytes", c.content_name(), c.content_size()?);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn payload_size(&self) -> Result<u64> {
+    pub fn content_size(&self) -> Result<u64> {
         let i = self
-            .payload_index
+            .content_index
             .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
         Ok(self.entries[i].size)
     }
 
-    /// The CRC-32 the archive records for the payload.
+    /// The CRC-32 the archive records for the content file.
     ///
     /// Read from the central directory alongside the size, so this decompresses
     /// nothing and costs no more than asking.
@@ -311,14 +311,14 @@ impl<R: Read + Seek> Container<R> {
     /// caller wanting that needs something this crate does not offer and the
     /// specification does not define.
     ///
-    /// For a caller holding a payload it extracted earlier and asking whether
+    /// For a caller holding a content file it extracted earlier and asking whether
     /// it has been edited since:
     ///
     /// ```no_run
     /// # fn main() -> slpc::Result<()> {
     /// let c = slpc::Container::open("report.pdf.slpc")?;
     /// let extracted = std::fs::read("report.pdf")?;
-    /// if crc32fast::hash(&extracted) != c.payload_crc()? {
+    /// if crc32fast::hash(&extracted) != c.content_crc()? {
     ///     println!("the copy on disk is not the one in the container");
     /// }
     /// # Ok(())
@@ -328,16 +328,16 @@ impl<R: Read + Seek> Container<R> {
     /// # Errors
     ///
     /// [`Unsupported::Version`] where the container declares a version this
-    /// build does not implement, since its payload was never located. Same
-    /// refusal, and for the same reason, as [`Container::payload_size`].
-    pub fn payload_crc(&self) -> Result<u32> {
+    /// build does not implement, since its content file was never located. Same
+    /// refusal, and for the same reason, as [`Container::content_size`].
+    pub fn content_crc(&self) -> Result<u32> {
         let i = self
-            .payload_index
+            .content_index
             .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
         Ok(self.entries[i].crc)
     }
 
-    /// The permission bits the archive records for the payload, where it
+    /// The permission bits the archive records for the content file, where it
     /// records any.
     ///
     /// `Ok(None)` where the container says nothing, which is the common case:
@@ -349,24 +349,24 @@ impl<R: Read + Seek> Container<R> {
     /// high sixteen bits carry something.
     ///
     /// The file-type bits are masked off; [`EntryKind`] is where those are
-    /// answered, and SPEC 3 already limits a payload to a regular file entry.
+    /// answered, and SPEC 3 already limits a content file to a regular file entry.
     /// What comes back is the permission bits alone, `0o7777` at the widest.
     ///
     /// **This is for saying, not for applying.** SPEC 3 requires that an
-    /// extracted payload get the permissions a newly created file would
+    /// extracted content file get the permissions a newly created file would
     /// ordinarily receive, and forbids applying what the archive recorded: a
     /// conformant container may record setuid, and honouring it would put a
     /// setuid file on disk. [`Destination`](crate::Destination) is where the
     /// writing side of that lives, and it never consults this. What this is
-    /// for is telling somebody what they are holding — that a payload was
+    /// for is telling somebody what they are holding — that a content file was
     /// executable where it came from, and that the copy they are about to get
     /// will not be.
     ///
     /// ```no_run
     /// # fn main() -> slpc::Result<()> {
     /// let c = slpc::Container::open("build.sh.slpc")?;
-    /// if c.payload_mode()?.is_some_and(|m| m & 0o111 != 0) {
-    ///     println!("the payload is an executable file");
+    /// if c.content_mode()?.is_some_and(|m| m & 0o111 != 0) {
+    ///     println!("the content file is an executable file");
     /// }
     /// # Ok(())
     /// # }
@@ -375,16 +375,16 @@ impl<R: Read + Seek> Container<R> {
     /// # Errors
     ///
     /// [`Unsupported::Version`] where the container declares a version this
-    /// build does not implement, since its payload was never located. Same
-    /// refusal, and for the same reason, as [`Container::payload_size`].
-    pub fn payload_mode(&self) -> Result<Option<u32>> {
+    /// build does not implement, since its content file was never located. Same
+    /// refusal, and for the same reason, as [`Container::content_size`].
+    pub fn content_mode(&self) -> Result<Option<u32>> {
         let i = self
-            .payload_index
+            .content_index
             .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
         // Matched on the raw name rather than by index. The two vectors are the
         // same directory, but the ZIP crate keys its own by name and collapses
         // duplicates, so the indices agree only in the absence of one — and
-        // uniqueness having been established is exactly what a payload index
+        // uniqueness having been established is exactly what a content file index
         // means, so the match is unambiguous here and would not be anywhere
         // that ran earlier.
         let raw = &self.entries[i].raw;
@@ -397,19 +397,19 @@ impl<R: Read + Seek> Container<R> {
         Ok((mode != 0).then_some(mode & 0o7777))
     }
 
-    /// Whether this build can decode the payload, and what stops it when it
+    /// Whether this build can decode the content file, and what stops it when it
     /// cannot.
     ///
     /// Read off the central directory entry collected when the container was
     /// opened, so this decompresses nothing, reads nothing further, and
     /// borrows shared. It is for a program that has to commit to extraction
-    /// before performing it: a button offering to open the payload, a menu
+    /// before performing it: a button offering to open the content file, a menu
     /// item, a plan stating what it is about to do. The alternative is to
     /// attempt the extraction and read the answer off the failure.
     ///
-    /// The three refusals are [`Container::payload`]'s own, in the order it
+    /// The three refusals are [`Container::content`]'s own, in the order it
     /// meets them. A container declaring a version this build does not
-    /// implement never had its payload located, so that answer comes first. An
+    /// implement never had its content file located, so that answer comes first. An
     /// encrypted member is next, because a member can be encrypted and
     /// compressed at once and the archive is asked about encryption first. A
     /// compression method this build carries no decoder for is last.
@@ -421,21 +421,21 @@ impl<R: Read + Seek> Container<R> {
     ///
     /// **`Ok` is not a promise that extraction will succeed.** It says this
     /// build knows how to decode the member. The bytes can still be truncated,
-    /// fail their checksum, or fail to read, and [`Container::payload`] and the
+    /// fail their checksum, or fail to read, and [`Container::content`] and the
     /// stream it returns report that if it happens.
     ///
     /// ```no_run
     /// # fn main() -> slpc::Result<()> {
     /// let c = slpc::Container::open("report.pdf.slpc")?;
-    /// if let Err(why) = c.check_payload_readable() {
-    ///     println!("{} cannot be opened here: {why}", c.payload_name());
+    /// if let Err(why) = c.check_content_readable() {
+    ///     println!("{} cannot be opened here: {why}", c.content_name());
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn check_payload_readable(&self) -> std::result::Result<(), Unsupported> {
+    pub fn check_content_readable(&self) -> std::result::Result<(), Unsupported> {
         let i = self
-            .payload_index
+            .content_index
             .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
         if self.entries[i].encrypted {
             return Err(Unsupported::Encrypted);
@@ -446,63 +446,63 @@ impl<R: Read + Seek> Container<R> {
         Ok(())
     }
 
-    /// The payload, as a stream.
+    /// The content file, as a stream.
     ///
-    /// Never buffered whole. A payload is a file of arbitrary size, and a
+    /// Never buffered whole. A content file is a file of arbitrary size, and a
     /// library that handed back a `Vec<u8>` would be deciding for its caller
     /// that the file fits in memory.
-    pub fn payload(&mut self) -> Result<impl Read + '_> {
+    pub fn content(&mut self) -> Result<impl Read + '_> {
         let i = self
-            .payload_index
+            .content_index
             .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
         Ok(self.archive.by_index(i)?)
     }
 }
 
-/// The metadata document of a byte stream, asking no conformance question.
+/// The flyleaf document of a byte stream, asking no conformance question.
 ///
 /// Reads the member SPEC 2.1 names and parses it, requiring of that member what
 /// SPEC 2.2 requires: one of it, valid TOML, UTF-8. It looks for neither
-/// required key and never locates a payload.
+/// required key and never locates a content file.
 ///
 /// This exists because a container can be non-conformant somewhere else
-/// entirely and still carry a metadata document worth reading: `payload.file`
+/// entirely and still carry a flyleaf document worth reading: `content.file`
 /// naming no member, naming several, or naming something SPEC 2.3 forbids all
 /// leave a document that parsed cleanly, and [`Container::read`] returns an
-/// error over the payload before a caller can reach it. A program showing a
+/// error over the content file before a caller can reach it. A program showing a
 /// person what is in a file wants to show them that document.
 ///
 /// It is not a verdict and must not be used as one: a document coming back
 /// says nothing about whether the container conforms. Ask
 /// [`validate`](crate::validate) for that, which is the only function here that
 /// answers the question SPEC 3 constrains.
-pub fn metadata_of<R: Read + Seek>(reader: R) -> Result<DocumentMut> {
-    metadata_of_with(reader, Limits::default())
+pub fn flyleaf_of<R: Read + Seek>(reader: R) -> Result<DocumentMut> {
+    flyleaf_of_with(reader, Limits::default())
 }
 
-/// The metadata document alone, under bounds of the caller's choosing.
+/// The flyleaf document alone, under bounds of the caller's choosing.
 ///
-/// [`metadata_of`] with [`Limits::default`]. It reaches the same member by the
+/// [`flyleaf_of`] with [`Limits::default`]. It reaches the same member by the
 /// same route and is exposed to the same thing, so a caller that bounds one
 /// and not the other has bounded nothing.
-pub fn metadata_of_with<R: Read + Seek>(mut reader: R, limits: Limits) -> Result<DocumentMut> {
+pub fn flyleaf_of_with<R: Read + Seek>(mut reader: R, limits: Limits) -> Result<DocumentMut> {
     let names = central::names(&mut reader)?;
     reader.rewind()?;
 
     let mut archive = ZipArchive::new(reader)?;
     let entries = entries_of(&mut archive)?;
 
-    let i = match locate(&entries, &names, METADATA_MEMBER) {
+    let i = match locate(&entries, &names, FLYLEAF_MEMBER) {
         Located::One(i) => i,
-        Located::None => return Err(Malformed::NoMetadataMember.into()),
-        Located::Several(n) => return Err(Malformed::DuplicateMetadataMember(n).into()),
+        Located::None => return Err(Malformed::NoFlyleafMember.into()),
+        Located::Several(n) => return Err(Malformed::DuplicateFlyleafMember(n).into()),
     };
 
-    let bytes = read_metadata_member(&mut archive, i, entries[i].size, limits)?;
-    metadata::document(&bytes)
+    let bytes = read_flyleaf_member(&mut archive, i, entries[i].size, limits)?;
+    flyleaf::document(&bytes)
 }
 
-/// Decompress the metadata member, stopping at the bound SPEC 6 requires.
+/// Decompress the flyleaf member, stopping at the bound SPEC 6 requires.
 ///
 /// The recorded size is read first because it refuses the ordinary hostile case
 /// without inflating a byte. It is not the guarantee: measured against
@@ -515,14 +515,14 @@ pub fn metadata_of_with<R: Read + Seek>(mut reader: R, limits: Limits) -> Result
 /// `limit + 1` so that reaching the bound is a refusal rather than a silent
 /// truncation: a document cut off at the limit would parse to something the
 /// container does not say.
-fn read_metadata_member<R: Read + Seek>(
+fn read_flyleaf_member<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     index: usize,
     declared: u64,
     limits: Limits,
 ) -> Result<Vec<u8>> {
-    let limit = limits.metadata_bytes;
-    let too_large = || Unsupported::MetadataTooLarge { limit, declared };
+    let limit = limits.flyleaf_bytes;
+    let too_large = || Unsupported::FlyleafTooLarge { limit, declared };
     if declared > limit {
         return Err(too_large().into());
     }
@@ -536,20 +536,20 @@ fn read_metadata_member<R: Read + Seek>(
     Ok(bytes)
 }
 
-/// Find the member `payload.file` names, and check it may be a payload.
-pub(crate) fn locate_payload(
+/// Find the member `content.file` names, and check it may be a content file.
+pub(crate) fn locate_content(
     entries: &[Entry],
     names: &[central::Recorded],
-    payload_file: &str,
+    content_file: &str,
 ) -> Result<usize> {
-    name::check_payload_name(payload_file)?;
+    name::check_content_name(content_file)?;
 
-    let i = match locate(entries, names, payload_file) {
+    let i = match locate(entries, names, content_file) {
         Located::One(i) => i,
-        Located::None => return Err(Malformed::NoPayloadMember(payload_file.to_owned()).into()),
+        Located::None => return Err(Malformed::NoContentMember(content_file.to_owned()).into()),
         Located::Several(count) => {
-            return Err(Malformed::DuplicatePayloadMember {
-                name: payload_file.to_owned(),
+            return Err(Malformed::DuplicateContentMember {
+                name: content_file.to_owned(),
                 count,
             }
             .into())
@@ -559,8 +559,8 @@ pub(crate) fn locate_payload(
     // SPEC 2.3 requires a regular file entry, so every other type an archive
     // can record is excluded rather than just symbolic links.
     if entries[i].kind != EntryKind::Regular {
-        return Err(Error::Malformed(Malformed::PayloadNotARegularFile {
-            name: payload_file.to_owned(),
+        return Err(Error::Malformed(Malformed::ContentNotARegularFile {
+            name: content_file.to_owned(),
             kind: entries[i].kind,
         }));
     }

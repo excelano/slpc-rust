@@ -5,120 +5,120 @@
 
 mod support;
 
-use support::{container, metadata, open, payload_of, raw_zip, Member};
+use support::{container, flyleaf, open, content_of, raw_zip, Member};
 
-use slpc::{EntryKind, Error, Malformed, NameError, Unsupported, METADATA_MEMBER};
+use slpc::{EntryKind, Error, Malformed, NameError, Unsupported, FLYLEAF_MEMBER};
 
 #[test]
 fn reads_a_container() {
     let bytes = container("report.pdf", b"%PDF-1.7 not really\n");
     let mut c = open(&bytes).unwrap();
-    assert_eq!(c.version(), "1.0");
-    assert_eq!(c.payload_name(), "report.pdf");
-    assert_eq!(payload_of(&mut c), b"%PDF-1.7 not really\n");
+    assert_eq!(c.version(), "1.1");
+    assert_eq!(c.content_name(), "report.pdf");
+    assert_eq!(content_of(&mut c), b"%PDF-1.7 not really\n");
 }
 
 #[test]
-fn reads_a_deflated_payload() {
+fn reads_a_deflated_content() {
     // The one fixture built by an ordinary writer, because compressing by hand
     // would test the test rather than the library.
     let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
-    let payload: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
-    w.start_file(METADATA_MEMBER, opts).unwrap();
-    std::io::Write::write_all(&mut w, metadata("big.bin").as_bytes()).unwrap();
+    let content: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    w.start_file(FLYLEAF_MEMBER, opts).unwrap();
+    std::io::Write::write_all(&mut w, flyleaf("big.bin").as_bytes()).unwrap();
     w.start_file("big.bin", opts).unwrap();
-    std::io::Write::write_all(&mut w, &payload).unwrap();
+    std::io::Write::write_all(&mut w, &content).unwrap();
     let bytes = w.finish().unwrap().into_inner();
 
     let mut c = open(&bytes).unwrap();
-    assert_eq!(c.payload_name(), "big.bin");
-    assert_eq!(payload_of(&mut c), payload);
+    assert_eq!(c.content_name(), "big.bin");
+    assert_eq!(content_of(&mut c), content);
 }
 
 #[test]
 fn passes_through_keys_and_members_it_does_not_recognise() {
-    let meta = "slipcase_version = \"1.0\"\ntitle = \"Q3\"\n\n[payload]\nfile = \"a.txt\"\n\n[custom]\nnested = { deep = [1, 2] }\n";
+    let meta = "slipcase_version = \"1.1\"\ntitle = \"Q3\"\n\n[content]\nfile = \"a.txt\"\n\n[custom]\nnested = { deep = [1, 2] }\n";
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, meta.as_bytes()),
-        Member::new("a.txt", b"payload\n"),
+        Member::new(FLYLEAF_MEMBER, meta.as_bytes()),
+        Member::new("a.txt", b"content\n"),
         Member::new("__MACOSX/._a.txt", b"junk"),
         Member::new(".DS_Store", b"junk"),
     ]);
     let c = open(&bytes).unwrap();
-    assert_eq!(c.metadata()["title"].as_str(), Some("Q3"));
-    assert!(c.metadata()["custom"]["nested"]["deep"].is_array());
+    assert_eq!(c.flyleaf()["title"].as_str(), Some("Q3"));
+    assert!(c.flyleaf()["custom"]["nested"]["deep"].is_array());
 }
 
 #[test]
-fn metadata_bytes_are_the_member_as_stored() {
+fn flyleaf_bytes_are_the_member_as_stored() {
     let meta =
-        "# hand written\nslipcase_version   =    \"1.0\"\n\n[payload]\nfile = \"a.txt\"   # kept\n";
+        "# hand written\nslipcase_version   =    \"1.1\"\n\n[content]\nfile = \"a.txt\"   # kept\n";
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, meta.as_bytes()),
+        Member::new(FLYLEAF_MEMBER, meta.as_bytes()),
         Member::new("a.txt", b"x"),
     ]);
     let c = open(&bytes).unwrap();
-    assert_eq!(c.metadata_bytes(), meta.as_bytes());
+    assert_eq!(c.flyleaf_bytes(), meta.as_bytes());
     // And the document model agrees, down to the whitespace and the comments.
-    assert_eq!(c.metadata().to_string(), meta);
+    assert_eq!(c.flyleaf().to_string(), meta);
 }
 
 #[test]
 fn member_order_does_not_matter() {
-    let payload_first = raw_zip(&[
-        Member::new("a.txt", b"payload\n"),
-        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+    let content_first = raw_zip(&[
+        Member::new("a.txt", b"content\n"),
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
     ]);
-    let mut c = open(&payload_first).unwrap();
-    assert_eq!(payload_of(&mut c), b"payload\n");
+    let mut c = open(&content_first).unwrap();
+    assert_eq!(content_of(&mut c), b"content\n");
 }
 
 // --- Non-conformance, one rule at a time -----------------------------------
 
 #[test]
-fn rejects_an_archive_with_no_metadata_member() {
+fn rejects_an_archive_with_no_flyleaf_member() {
     let bytes = raw_zip(&[Member::new("a.txt", b"lonely")]);
     assert!(matches!(
         open(&bytes),
-        Err(Error::Malformed(Malformed::NoMetadataMember))
+        Err(Error::Malformed(Malformed::NoFlyleafMember))
     ));
 }
 
 #[test]
-fn rejects_metadata_that_is_not_utf8() {
+fn rejects_flyleaf_that_is_not_utf8() {
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, b"slipcase_version = \"\xff\xfe\"\n"),
+        Member::new(FLYLEAF_MEMBER, b"slipcase_version = \"\xff\xfe\"\n"),
         Member::new("a.txt", b"x"),
     ]);
     assert!(matches!(
         open(&bytes),
-        Err(Error::Malformed(Malformed::MetadataNotUtf8))
+        Err(Error::Malformed(Malformed::FlyleafNotUtf8))
     ));
 }
 
 #[test]
-fn rejects_metadata_that_is_not_toml() {
+fn rejects_flyleaf_that_is_not_toml() {
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, b"this is not = = toml\n"),
+        Member::new(FLYLEAF_MEMBER, b"this is not = = toml\n"),
         Member::new("a.txt", b"x"),
     ]);
     assert!(matches!(
         open(&bytes),
-        Err(Error::Malformed(Malformed::MetadataNotToml(_)))
+        Err(Error::Malformed(Malformed::FlyleafNotToml(_)))
     ));
 }
 
 #[test]
-fn rejects_metadata_missing_either_required_key() {
+fn rejects_flyleaf_missing_either_required_key() {
     for (meta, missing) in [
-        ("[payload]\nfile = \"a.txt\"\n", "slipcase_version"),
-        ("slipcase_version = \"1.0\"\n", "payload.file"),
-        ("slipcase_version = \"1.0\"\n[payload]\n", "payload.file"),
+        ("[content]\nfile = \"a.txt\"\n", "slipcase_version"),
+        ("slipcase_version = \"1.1\"\n", "content.file"),
+        ("slipcase_version = \"1.1\"\n[content]\n", "content.file"),
     ] {
         let bytes = raw_zip(&[
-            Member::new(METADATA_MEMBER, meta.as_bytes()),
+            Member::new(FLYLEAF_MEMBER, meta.as_bytes()),
             Member::new("a.txt", b"x"),
         ]);
         match open(&bytes) {
@@ -135,16 +135,16 @@ fn rejects_metadata_missing_either_required_key() {
 fn rejects_required_keys_that_are_not_strings() {
     for (meta, key) in [
         (
-            "slipcase_version = 1.0\n[payload]\nfile = \"a.txt\"\n",
+            "slipcase_version = 1.1\n[content]\nfile = \"a.txt\"\n",
             "slipcase_version",
         ),
         (
-            "slipcase_version = \"1.0\"\n[payload]\nfile = 7\n",
-            "payload.file",
+            "slipcase_version = \"1.1\"\n[content]\nfile = 7\n",
+            "content.file",
         ),
     ] {
         let bytes = raw_zip(&[
-            Member::new(METADATA_MEMBER, meta.as_bytes()),
+            Member::new(FLYLEAF_MEMBER, meta.as_bytes()),
             Member::new("a.txt", b"x"),
         ]);
         match open(&bytes) {
@@ -158,7 +158,7 @@ fn rejects_required_keys_that_are_not_strings() {
 }
 
 #[test]
-fn rejects_a_payload_file_that_is_not_a_plain_filename() {
+fn rejects_a_content_file_that_is_not_a_plain_filename() {
     for (name, want) in [
         ("", NameError::Empty),
         (".", NameError::Relative),
@@ -166,16 +166,16 @@ fn rejects_a_payload_file_that_is_not_a_plain_filename() {
         ("../etc/passwd", NameError::Separator('/')),
         ("..\\windows", NameError::Separator('\\')),
         ("C:evil", NameError::Colon),
-        (METADATA_MEMBER, NameError::ReservedForMetadata),
+        (FLYLEAF_MEMBER, NameError::ReservedForFlyleaf),
     ] {
         let bytes = raw_zip(&[
-            Member::new(METADATA_MEMBER, metadata(name).as_bytes()),
+            Member::new(FLYLEAF_MEMBER, flyleaf(name).as_bytes()),
             Member::new("a.txt", b"x"),
         ]);
         match open(&bytes) {
-            Err(Error::Malformed(Malformed::PayloadName(e))) => assert_eq!(e, want, "{name:?}"),
+            Err(Error::Malformed(Malformed::ContentName(e))) => assert_eq!(e, want, "{name:?}"),
             other => panic!(
-                "expected PayloadName({want:?}) for {name:?}, got {:?}",
+                "expected ContentName({want:?}) for {name:?}, got {:?}",
                 other.err()
             ),
         }
@@ -183,19 +183,19 @@ fn rejects_a_payload_file_that_is_not_a_plain_filename() {
 }
 
 #[test]
-fn rejects_a_payload_file_that_names_nothing() {
+fn rejects_a_content_file_that_names_nothing() {
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("absent.txt").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("absent.txt").as_bytes()),
         Member::new("present.txt", b"x"),
     ]);
     match open(&bytes) {
-        Err(Error::Malformed(Malformed::NoPayloadMember(n))) => assert_eq!(n, "absent.txt"),
-        other => panic!("expected NoPayloadMember, got {:?}", other.err()),
+        Err(Error::Malformed(Malformed::NoContentMember(n))) => assert_eq!(n, "absent.txt"),
+        other => panic!("expected NoContentMember, got {:?}", other.err()),
     }
 }
 
 #[test]
-fn rejects_a_payload_that_is_not_a_regular_file_entry() {
+fn rejects_a_content_that_is_not_a_regular_file_entry() {
     // SPEC 2.3 excludes every entry type but one, so each is checked rather
     // than only the symbolic link the earlier text named.
     for (mode, want) in [
@@ -206,15 +206,15 @@ fn rejects_a_payload_that_is_not_a_regular_file_entry() {
         (0o020_644, EntryKind::Other(0o2)),
     ] {
         let bytes = raw_zip(&[
-            Member::new(METADATA_MEMBER, metadata("odd").as_bytes()),
-            Member::new("odd", b"payload").with_mode(mode),
+            Member::new(FLYLEAF_MEMBER, flyleaf("odd").as_bytes()),
+            Member::new("odd", b"content").with_mode(mode),
         ]);
         match open(&bytes) {
-            Err(Error::Malformed(Malformed::PayloadNotARegularFile { kind, .. })) => {
+            Err(Error::Malformed(Malformed::ContentNotARegularFile { kind, .. })) => {
                 assert_eq!(kind, want, "mode {mode:o}");
             }
             other => panic!(
-                "mode {mode:o}: expected PayloadNotARegularFile, got {:?}",
+                "mode {mode:o}: expected ContentNotARegularFile, got {:?}",
                 other.err()
             ),
         }
@@ -223,42 +223,42 @@ fn rejects_a_payload_that_is_not_a_regular_file_entry() {
 
 #[test]
 fn rejects_more_than_one_member_of_either_name() {
-    // SPEC 2.1 requires exactly one of each. Two agreeing metadata members are
+    // SPEC 2.1 requires exactly one of each. Two agreeing flyleaf members are
     // the case worth having: taking the first would read them as one container
     // and never notice.
-    let two_metadata = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
-        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+    let two_flyleaf = raw_zip(&[
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
         Member::new("a.txt", b"x"),
     ]);
-    match open(&two_metadata) {
-        Err(Error::Malformed(Malformed::DuplicateMetadataMember(n))) => assert_eq!(n, 2),
-        other => panic!("expected DuplicateMetadataMember, got {:?}", other.err()),
+    match open(&two_flyleaf) {
+        Err(Error::Malformed(Malformed::DuplicateFlyleafMember(n))) => assert_eq!(n, 2),
+        other => panic!("expected DuplicateFlyleafMember, got {:?}", other.err()),
     }
 
-    let two_payloads = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+    let two_contents = raw_zip(&[
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
         Member::new("a.txt", b"first"),
         Member::new("a.txt", b"second"),
     ]);
-    match open(&two_payloads) {
-        Err(Error::Malformed(Malformed::DuplicatePayloadMember { name, count })) => {
+    match open(&two_contents) {
+        Err(Error::Malformed(Malformed::DuplicateContentMember { name, count })) => {
             assert_eq!((name.as_str(), count), ("a.txt", 2));
         }
-        other => panic!("expected DuplicatePayloadMember, got {:?}", other.err()),
+        other => panic!("expected DuplicateContentMember, got {:?}", other.err()),
     }
 }
 
 #[test]
-fn rejects_a_payload_file_containing_a_control_character() {
+fn rejects_a_content_file_containing_a_control_character() {
     for c in ['\u{0}', '\n', '\r', '\u{1f}', '\u{7f}'] {
         let name = format!("rep{c}ort.pdf");
         let bytes = raw_zip(&[
-            Member::new(METADATA_MEMBER, metadata(&name).as_bytes()),
+            Member::new(FLYLEAF_MEMBER, flyleaf(&name).as_bytes()),
             Member::new(&name, b"x"),
         ]);
         match open(&bytes) {
-            Err(Error::Malformed(Malformed::PayloadName(NameError::ControlCharacter(got)))) => {
+            Err(Error::Malformed(Malformed::ContentName(NameError::ControlCharacter(got)))) => {
                 assert_eq!(got, c);
             }
             other => panic!("U+{:04X}: got {:?}", c as u32, other.err()),
@@ -269,11 +269,11 @@ fn rejects_a_payload_file_containing_a_control_character() {
 #[test]
 fn an_entry_made_on_dos_is_not_taken_for_a_symlink() {
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
         Member::new("a.txt", b"from windows\n").dos_made(),
     ]);
     let mut c = open(&bytes).unwrap();
-    assert_eq!(payload_of(&mut c), b"from windows\n");
+    assert_eq!(content_of(&mut c), b"from windows\n");
 }
 
 // --- Member names ----------------------------------------------------------
@@ -282,43 +282,43 @@ fn an_entry_made_on_dos_is_not_taken_for_a_symlink() {
 fn matches_a_name_stored_as_cp437() {
     // Bit 11 clear, so the name is CP437: 0x87 is U+00E7.
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("caf\u{e7}.txt").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("caf\u{e7}.txt").as_bytes()),
         Member::named_raw(b"caf\x87.txt", b"cp437\n"),
     ]);
     let mut c = open(&bytes).unwrap();
-    assert_eq!(c.payload_name(), "caf\u{e7}.txt");
-    assert_eq!(payload_of(&mut c), b"cp437\n");
+    assert_eq!(c.content_name(), "caf\u{e7}.txt");
+    assert_eq!(content_of(&mut c), b"cp437\n");
 }
 
 #[test]
 fn never_matches_a_name_the_crate_decoded_lossily() {
     // Bit 11 set over bytes that are not UTF-8. The ZIP crate hands back
-    // U+FFFD; a payload.file copied from that lossy name must not match, or the
+    // U+FFFD; a content.file copied from that lossy name must not match, or the
     // answer would depend on the order the members happen to sit in.
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("caf\u{fffd}.txt").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("caf\u{fffd}.txt").as_bytes()),
         Member::named_raw(b"caf\xff.txt", b"impostor\n").flagged_utf8(),
     ]);
     match open(&bytes) {
-        Err(Error::Malformed(Malformed::NoPayloadMember(n))) => assert_eq!(n, "caf\u{fffd}.txt"),
-        other => panic!("expected NoPayloadMember, got {:?}", other.err()),
+        Err(Error::Malformed(Malformed::NoContentMember(n))) => assert_eq!(n, "caf\u{fffd}.txt"),
+        other => panic!("expected NoContentMember, got {:?}", other.err()),
     }
 }
 
 // --- Conformant, and this build cannot read it ------------------------------
 
 #[test]
-fn an_unrecognised_version_parses_and_reports_but_yields_no_payload() {
-    let meta = "slipcase_version = \"9.4\"\n\n[payload]\nfile = \"a.txt\"\n";
+fn an_unrecognised_version_parses_and_reports_but_yields_no_content() {
+    let meta = "slipcase_version = \"9.4\"\n\n[content]\nfile = \"a.txt\"\n";
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, meta.as_bytes()),
+        Member::new(FLYLEAF_MEMBER, meta.as_bytes()),
         Member::new("a.txt", b"x"),
     ]);
     let mut c = open(&bytes).unwrap();
     assert_eq!(c.version(), "9.4");
-    assert_eq!(c.payload_name(), "a.txt");
-    assert_eq!(c.metadata_bytes(), meta.as_bytes());
-    let got = c.payload();
+    assert_eq!(c.content_name(), "a.txt");
+    assert_eq!(c.flyleaf_bytes(), meta.as_bytes());
+    let got = c.content();
     match got {
         Err(Error::Unsupported(Unsupported::Version(v))) => assert_eq!(v, "9.4"),
         other => panic!("expected Unsupported::Version, got {:?}", other.err()),
@@ -326,16 +326,16 @@ fn an_unrecognised_version_parses_and_reports_but_yields_no_payload() {
 }
 
 #[test]
-fn a_payload_compressed_beyond_this_build_still_validates() {
+fn a_content_compressed_beyond_this_build_still_validates() {
     // Method 12 is bzip2, which the C-free feature set leaves out. SPEC 2.5
     // forbids rejecting the container for it.
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
         Member::new("a.txt", b"pretend this is bzip2").claims_method(12),
     ]);
     slpc::validate(std::io::Cursor::new(bytes.clone())).unwrap();
     let mut c = open(&bytes).unwrap();
-    let got = c.payload();
+    let got = c.content();
     match got {
         Err(Error::Unsupported(Unsupported::Compression(m))) => assert_eq!(m, 12),
         other => panic!("expected Unsupported::Compression, got {:?}", other.err()),
@@ -343,14 +343,14 @@ fn a_payload_compressed_beyond_this_build_still_validates() {
 }
 
 #[test]
-fn an_encrypted_payload_still_validates() {
+fn an_encrypted_content_still_validates() {
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
         Member::new("a.txt", b"ciphertext").encrypted(),
     ]);
     slpc::validate(std::io::Cursor::new(bytes.clone())).unwrap();
     let mut c = open(&bytes).unwrap();
-    let got = c.payload();
+    let got = c.content();
     assert!(matches!(
         got,
         Err(Error::Unsupported(Unsupported::Encrypted))
@@ -358,27 +358,27 @@ fn an_encrypted_payload_still_validates() {
 }
 
 #[test]
-fn a_container_may_be_its_own_payload() {
+fn a_container_may_be_its_own_content() {
     let inner = container("report.pdf", b"inner\n");
     let outer = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("report.pdf.slpc").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("report.pdf.slpc").as_bytes()),
         Member::new("report.pdf.slpc", &inner),
     ]);
     let mut c = open(&outer).unwrap();
-    let nested = payload_of(&mut c);
+    let nested = content_of(&mut c);
     assert_eq!(nested, inner);
     let mut c = open(&nested).unwrap();
-    assert_eq!(c.payload_name(), "report.pdf");
-    assert_eq!(payload_of(&mut c), b"inner\n");
+    assert_eq!(c.content_name(), "report.pdf");
+    assert_eq!(content_of(&mut c), b"inner\n");
 }
 
-// --- the payload's size ----------------------------------------------------
+// --- the content file's size ----------------------------------------------------
 
 #[test]
-fn reports_the_payloads_uncompressed_size() {
-    let payload = b"%PDF-1.7 not really\n";
-    let c = open(&container("report.pdf", payload)).unwrap();
-    assert_eq!(c.payload_size().unwrap(), payload.len() as u64);
+fn reports_the_contents_uncompressed_size() {
+    let content = b"%PDF-1.7 not really\n";
+    let c = open(&container("report.pdf", content)).unwrap();
+    assert_eq!(c.content_size().unwrap(), content.len() as u64);
 }
 
 #[test]
@@ -390,38 +390,38 @@ fn the_name_and_the_size_can_be_asked_for_together() {
     assert_eq!(
         format!(
             "{} is {} bytes",
-            c.payload_name(),
-            c.payload_size().unwrap()
+            c.content_name(),
+            c.content_size().unwrap()
         ),
         "report.pdf is 4 bytes"
     );
 }
 
 #[test]
-fn a_payload_of_zero_length_has_a_size_and_not_an_error() {
-    // SPEC 2.3 permits a payload of any length, including zero, so this is a
+fn a_content_of_zero_length_has_a_size_and_not_an_error() {
+    // SPEC 2.3 permits a content file of any length, including zero, so this is a
     // number rather than a complaint.
     let c = open(&container("empty.bin", b"")).unwrap();
-    assert_eq!(c.payload_size().unwrap(), 0);
+    assert_eq!(c.content_size().unwrap(), 0);
 }
 
 #[test]
 fn the_size_is_the_uncompressed_one() {
-    // A deflated payload's stored length is not its length, and a caller sizing
+    // A deflated content file's stored length is not its length, and a caller sizing
     // a progress bar or a buffer wants what comes out rather than what sits in
     // the archive.
     let text = "a".repeat(4096);
     let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opts: zip::write::FileOptions<'_, ()> =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    w.start_file(METADATA_MEMBER, opts).unwrap();
-    std::io::Write::write_all(&mut w, metadata("big.txt").as_bytes()).unwrap();
+    w.start_file(FLYLEAF_MEMBER, opts).unwrap();
+    std::io::Write::write_all(&mut w, flyleaf("big.txt").as_bytes()).unwrap();
     w.start_file("big.txt", opts).unwrap();
     std::io::Write::write_all(&mut w, text.as_bytes()).unwrap();
     let bytes = w.finish().unwrap().into_inner();
 
     let c = open(&bytes).unwrap();
-    assert_eq!(c.payload_size().unwrap(), 4096);
+    assert_eq!(c.content_size().unwrap(), 4096);
     assert!(
         bytes.len() < 2048,
         "the fixture did not compress, so this proves nothing"
@@ -429,50 +429,50 @@ fn the_size_is_the_uncompressed_one() {
 }
 
 #[test]
-fn an_unrecognized_version_has_no_payload_to_size() {
-    // The payload was never located, because SPEC 3 forbids applying this
+fn an_unrecognized_version_has_no_content_to_size() {
+    // The content file was never located, because SPEC 3 forbids applying this
     // version's rules to a container declaring another. Same answer as asking
-    // for the payload itself.
-    let doc = "slipcase_version = \"9.4\"\n\n[payload]\nfile = \"report.pdf\"\n";
+    // for the content file itself.
+    let doc = "slipcase_version = \"9.4\"\n\n[content]\nfile = \"report.pdf\"\n";
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, doc.as_bytes()),
+        Member::new(FLYLEAF_MEMBER, doc.as_bytes()),
         Member::new("report.pdf", b"x"),
     ]);
     let c = open(&bytes).unwrap();
     assert!(matches!(
-        c.payload_size(),
+        c.content_size(),
         Err(Error::Unsupported(Unsupported::Version(v))) if v == "9.4"
     ));
 }
 
-// --- the payload's CRC -----------------------------------------------------
+// --- the content file's CRC -----------------------------------------------------
 
 #[test]
-fn reports_the_crc_the_archive_recorded_for_the_payload() {
-    let payload = b"%PDF-1.7 not really\n";
-    let c = open(&container("report.pdf", payload)).unwrap();
-    assert_eq!(c.payload_crc().unwrap(), crc32fast::hash(payload));
+fn reports_the_crc_the_archive_recorded_for_the_content() {
+    let content = b"%PDF-1.7 not really\n";
+    let c = open(&container("report.pdf", content)).unwrap();
+    assert_eq!(c.content_crc().unwrap(), crc32fast::hash(content));
 }
 
 #[test]
-fn the_crc_is_of_the_uncompressed_payload() {
+fn the_crc_is_of_the_uncompressed_content() {
     // The stored bytes of a deflated member are not the member, and a caller
     // comparing a file on disk against the container has the uncompressed form
     // in hand. Asserted against a fixture that actually compressed, so a
     // regression to the stored bytes fails here rather than passing by
-    // coincidence on an incompressible payload.
+    // coincidence on an incompressible content file.
     let text = "a".repeat(4096);
     let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opts: zip::write::FileOptions<'_, ()> =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    w.start_file(METADATA_MEMBER, opts).unwrap();
-    std::io::Write::write_all(&mut w, metadata("big.txt").as_bytes()).unwrap();
+    w.start_file(FLYLEAF_MEMBER, opts).unwrap();
+    std::io::Write::write_all(&mut w, flyleaf("big.txt").as_bytes()).unwrap();
     w.start_file("big.txt", opts).unwrap();
     std::io::Write::write_all(&mut w, text.as_bytes()).unwrap();
     let bytes = w.finish().unwrap().into_inner();
 
     let c = open(&bytes).unwrap();
-    assert_eq!(c.payload_crc().unwrap(), crc32fast::hash(text.as_bytes()));
+    assert_eq!(c.content_crc().unwrap(), crc32fast::hash(text.as_bytes()));
     assert!(
         bytes.len() < 2048,
         "the fixture did not compress, so this proves nothing"
@@ -480,87 +480,87 @@ fn the_crc_is_of_the_uncompressed_payload() {
 }
 
 #[test]
-fn a_payload_of_zero_length_has_a_crc_and_not_an_error() {
-    // SPEC 2.3 permits a zero-length payload, and CRC-32 of nothing is zero.
+fn a_content_of_zero_length_has_a_crc_and_not_an_error() {
+    // SPEC 2.3 permits a zero-length content file, and CRC-32 of nothing is zero.
     // A number rather than a complaint, for the same reason the size is.
     let c = open(&container("empty.bin", b"")).unwrap();
-    assert_eq!(c.payload_crc().unwrap(), 0);
+    assert_eq!(c.content_crc().unwrap(), 0);
 }
 
 #[test]
-fn the_crc_is_the_payloads_and_not_the_metadatas() {
+fn the_crc_is_the_contents_and_not_the_flyleafs() {
     // Both members have one, they are adjacent in the same directory, and an
     // off-by-one in the index would read the other and look plausible.
-    let c = open(&container("report.pdf", b"payload")).unwrap();
-    assert_eq!(c.payload_crc().unwrap(), crc32fast::hash(b"payload"));
+    let c = open(&container("report.pdf", b"content")).unwrap();
+    assert_eq!(c.content_crc().unwrap(), crc32fast::hash(b"content"));
     assert_ne!(
-        c.payload_crc().unwrap(),
-        crc32fast::hash(metadata("report.pdf").as_bytes())
+        c.content_crc().unwrap(),
+        crc32fast::hash(flyleaf("report.pdf").as_bytes())
     );
 }
 
 #[test]
-fn an_unrecognized_version_has_no_payload_to_checksum() {
-    // The payload was never located. Same refusal as asking for its size, and
+fn an_unrecognized_version_has_no_content_to_checksum() {
+    // The content file was never located. Same refusal as asking for its size, and
     // for the same reason.
-    let doc = "slipcase_version = \"9.4\"\n\n[payload]\nfile = \"report.pdf\"\n";
+    let doc = "slipcase_version = \"9.4\"\n\n[content]\nfile = \"report.pdf\"\n";
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, doc.as_bytes()),
+        Member::new(FLYLEAF_MEMBER, doc.as_bytes()),
         Member::new("report.pdf", b"x"),
     ]);
     let c = open(&bytes).unwrap();
     assert!(matches!(
-        c.payload_crc(),
+        c.content_crc(),
         Err(Error::Unsupported(Unsupported::Version(v))) if v == "9.4"
     ));
 }
 
-// --- whether the payload can be read ---------------------------------------
+// --- whether the content file can be read ---------------------------------------
 
 /// A container whose members are deflated, built by an ordinary writer.
 fn deflated_container() -> Vec<u8> {
     let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
-    w.start_file(METADATA_MEMBER, opts).unwrap();
-    std::io::Write::write_all(&mut w, metadata("a.txt").as_bytes()).unwrap();
+    w.start_file(FLYLEAF_MEMBER, opts).unwrap();
+    std::io::Write::write_all(&mut w, flyleaf("a.txt").as_bytes()).unwrap();
     w.start_file("a.txt", opts).unwrap();
     std::io::Write::write_all(&mut w, "a".repeat(4096).as_bytes()).unwrap();
     w.finish().unwrap().into_inner()
 }
 
 #[test]
-fn a_payload_this_build_can_decode_is_readable() {
+fn a_content_this_build_can_decode_is_readable() {
     let c = open(&container("report.pdf", b"%PDF-1.7 not really\n")).unwrap();
-    assert!(c.check_payload_readable().is_ok());
+    assert!(c.check_content_readable().is_ok());
     let c = open(&deflated_container()).unwrap();
-    assert!(c.check_payload_readable().is_ok());
+    assert!(c.check_content_readable().is_ok());
 }
 
 #[test]
 fn the_name_and_the_check_can_be_asked_for_together() {
-    // A shared borrow, like payload_name and payload_size. Anything describing
-    // a payload before offering to open it asks all three at once, and `&mut`
+    // A shared borrow, like content_name and content_size. Anything describing
+    // a content file before offering to open it asks all three at once, and `&mut`
     // on any of them makes that a borrow error rather than a line of code.
     let c = open(&container("report.pdf", b"1234")).unwrap();
-    let line = match c.check_payload_readable() {
+    let line = match c.check_content_readable() {
         Ok(()) => format!(
             "open {} ({} bytes)",
-            c.payload_name(),
-            c.payload_size().unwrap()
+            c.content_name(),
+            c.content_size().unwrap()
         ),
-        Err(why) => format!("{} cannot be opened: {why}", c.payload_name()),
+        Err(why) => format!("{} cannot be opened: {why}", c.content_name()),
     };
     assert_eq!(line, "open report.pdf (4 bytes)");
 }
 
 #[test]
-fn an_encrypted_payload_is_not_readable_and_the_container_still_conforms() {
+fn an_encrypted_content_is_not_readable_and_the_container_still_conforms() {
     // SPEC 2.5 puts encryption outside the conformance question, so these two
     // answers are meant to differ. Folding one into the other would have this
     // build call a conformant container broken.
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
         Member::new("a.txt", b"ciphertext").encrypted(),
     ]);
     assert!(slpc::validate(std::io::Cursor::new(bytes.clone()))
@@ -568,44 +568,44 @@ fn an_encrypted_payload_is_not_readable_and_the_container_still_conforms() {
         .is_conformant());
     let c = open(&bytes).unwrap();
     assert!(matches!(
-        c.check_payload_readable(),
+        c.check_content_readable(),
         Err(Unsupported::Encrypted)
     ));
 }
 
 #[test]
-fn a_payload_compressed_beyond_this_build_is_not_readable() {
+fn a_content_compressed_beyond_this_build_is_not_readable() {
     // Method 12 is bzip2, which the C-free feature set leaves out.
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
         Member::new("a.txt", b"pretend this is bzip2").claims_method(12),
     ]);
     let c = open(&bytes).unwrap();
     assert!(matches!(
-        c.check_payload_readable(),
+        c.check_content_readable(),
         Err(Unsupported::Compression(12))
     ));
 }
 
 #[test]
-fn an_unrecognised_version_has_no_payload_to_check() {
-    // The payload was never located, because SPEC 3 forbids applying this
+fn an_unrecognised_version_has_no_content_to_check() {
+    // The content file was never located, because SPEC 3 forbids applying this
     // version's rules to a container declaring another. Same answer as asking
-    // for the payload itself, and as asking for its size.
-    let doc = "slipcase_version = \"9.4\"\n\n[payload]\nfile = \"a.txt\"\n";
+    // for the content file itself, and as asking for its size.
+    let doc = "slipcase_version = \"9.4\"\n\n[content]\nfile = \"a.txt\"\n";
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, doc.as_bytes()),
+        Member::new(FLYLEAF_MEMBER, doc.as_bytes()),
         Member::new("a.txt", b"x"),
     ]);
     let c = open(&bytes).unwrap();
     assert!(matches!(
-        c.check_payload_readable(),
+        c.check_content_readable(),
         Err(Unsupported::Version(v)) if v == "9.4"
     ));
 }
 
 #[test]
-fn a_payload_that_is_both_encrypted_and_unreadable_reports_the_encryption() {
+fn a_content_that_is_both_encrypted_and_unreadable_reports_the_encryption() {
     // A member can be encrypted and carry a method this build lacks at once,
     // which is what every AES member is. The archive is asked about encryption
     // first, and this has to meet them in the same order or the two answers
@@ -614,51 +614,51 @@ fn a_payload_that_is_both_encrypted_and_unreadable_reports_the_encryption() {
     // extra field this suite does not stamp and the ZIP crate refuses the
     // header without it.
     let bytes = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
         Member::new("a.txt", b"ciphertext")
             .encrypted()
             .claims_method(12),
     ]);
     let mut c = open(&bytes).unwrap();
     assert!(matches!(
-        c.check_payload_readable(),
+        c.check_content_readable(),
         Err(Unsupported::Encrypted)
     ));
     assert!(matches!(
-        c.payload(),
+        c.content(),
         Err(Error::Unsupported(Unsupported::Encrypted))
     ));
 }
 
 #[test]
 fn the_check_agrees_with_what_extraction_does() {
-    // The check mirrors two tests the ZIP crate makes inside `payload`, and a
+    // The check mirrors two tests the ZIP crate makes inside `content()`, and a
     // later version of that crate could add a third. This is what notices. The
     // direction that matters is a check saying yes where extraction says no,
     // since that is the answer a caller acts on.
-    let unrecognised = "slipcase_version = \"9.4\"\n\n[payload]\nfile = \"a.txt\"\n";
+    let unrecognised = "slipcase_version = \"9.4\"\n\n[content]\nfile = \"a.txt\"\n";
     let fixtures: Vec<(&str, Vec<u8>)> = vec![
-        ("a stored payload", container("a.txt", b"plain\n")),
-        ("a payload of zero length", container("empty.bin", b"")),
-        ("a deflated payload", deflated_container()),
+        ("a stored content file", container("a.txt", b"plain\n")),
+        ("a content file of zero length", container("empty.bin", b"")),
+        ("a deflated content file", deflated_container()),
         (
-            "an encrypted payload",
+            "an encrypted content file",
             raw_zip(&[
-                Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+                Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
                 Member::new("a.txt", b"ciphertext").encrypted(),
             ]),
         ),
         (
-            "a payload compressed by method 12",
+            "a content file compressed by method 12",
             raw_zip(&[
-                Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
+                Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
                 Member::new("a.txt", b"pretend this is bzip2").claims_method(12),
             ]),
         ),
         (
             "a container declaring another version",
             raw_zip(&[
-                Member::new(METADATA_MEMBER, unrecognised.as_bytes()),
+                Member::new(FLYLEAF_MEMBER, unrecognised.as_bytes()),
                 Member::new("a.txt", b"x"),
             ]),
         ),
@@ -668,47 +668,47 @@ fn the_check_agrees_with_what_extraction_does() {
         let mut c = open(&bytes).unwrap();
         // Both sides say the same sentence for the same refusal: `Error`
         // delegates its Display to the `Unsupported` it carries. Anything else
-        // coming back from `payload` — an i/o error, say — reads as a
+        // coming back from `content()` — an i/o error, say — reads as a
         // disagreement here, which is what it would be.
-        let checked = c.check_payload_readable().err().map(|u| u.to_string());
-        let extracted = c.payload().err().map(|e| e.to_string());
+        let checked = c.check_content_readable().err().map(|u| u.to_string());
+        let extracted = c.content().err().map(|e| e.to_string());
         assert_eq!(checked, extracted, "the two disagree about {what}");
     }
 }
 
-// --- the metadata of a container that will not open ------------------------
+// --- the flyleaf of a container that will not open ------------------------
 
-fn metadata_of(bytes: &[u8]) -> slpc::Result<slpc::toml_edit::DocumentMut> {
-    slpc::metadata_of(std::io::Cursor::new(bytes.to_vec()))
+fn flyleaf_of(bytes: &[u8]) -> slpc::Result<slpc::toml_edit::DocumentMut> {
+    slpc::flyleaf_of(std::io::Cursor::new(bytes.to_vec()))
 }
 
 #[test]
 fn hands_back_the_document_of_a_conformant_container() {
-    let doc = metadata_of(&container("report.pdf", b"x")).unwrap();
-    assert_eq!(doc["payload"]["file"].as_str(), Some("report.pdf"));
+    let doc = flyleaf_of(&container("report.pdf", b"x")).unwrap();
+    assert_eq!(doc["content"]["file"].as_str(), Some("report.pdf"));
 }
 
 #[test]
-fn hands_back_the_document_when_payload_file_names_no_member() {
-    // The container is not conformant and its metadata is perfectly readable.
+fn hands_back_the_document_when_content_file_names_no_member() {
+    // The container is not conformant and its flyleaf is perfectly readable.
     // `Container::read` cannot say both, which is why this exists.
     let bytes = raw_zip(&[Member::new(
-        METADATA_MEMBER,
-        metadata("absent.pdf").as_bytes(),
+        FLYLEAF_MEMBER,
+        flyleaf("absent.pdf").as_bytes(),
     )]);
     assert!(matches!(
         open(&bytes),
-        Err(Error::Malformed(Malformed::NoPayloadMember(_)))
+        Err(Error::Malformed(Malformed::NoContentMember(_)))
     ));
 
-    let doc = metadata_of(&bytes).unwrap();
-    assert_eq!(doc["payload"]["file"].as_str(), Some("absent.pdf"));
+    let doc = flyleaf_of(&bytes).unwrap();
+    assert_eq!(doc["content"]["file"].as_str(), Some("absent.pdf"));
 }
 
 #[test]
 fn hands_back_the_document_when_a_required_key_is_absent() {
     let bytes = raw_zip(&[Member::new(
-        METADATA_MEMBER,
+        FLYLEAF_MEMBER,
         b"title = \"a document with no version key\"\n",
     )]);
     assert!(matches!(
@@ -716,7 +716,7 @@ fn hands_back_the_document_when_a_required_key_is_absent() {
         Err(Error::Malformed(Malformed::MissingKey(_)))
     ));
 
-    let doc = metadata_of(&bytes).unwrap();
+    let doc = flyleaf_of(&bytes).unwrap();
     assert_eq!(
         doc["title"].as_str(),
         Some("a document with no version key")
@@ -724,19 +724,19 @@ fn hands_back_the_document_when_a_required_key_is_absent() {
 }
 
 #[test]
-fn hands_back_the_document_when_payload_file_is_a_path() {
+fn hands_back_the_document_when_content_file_is_a_path() {
     let bytes = raw_zip(&[Member::new(
-        METADATA_MEMBER,
-        metadata("../etc/passwd").as_bytes(),
+        FLYLEAF_MEMBER,
+        flyleaf("../etc/passwd").as_bytes(),
     )]);
     assert!(matches!(
         open(&bytes),
-        Err(Error::Malformed(Malformed::PayloadName(
+        Err(Error::Malformed(Malformed::ContentName(
             NameError::Separator('/')
         )))
     ));
     assert_eq!(
-        metadata_of(&bytes).unwrap()["payload"]["file"].as_str(),
+        flyleaf_of(&bytes).unwrap()["content"]["file"].as_str(),
         Some("../etc/passwd")
     );
 }
@@ -745,40 +745,40 @@ fn hands_back_the_document_when_payload_file_is_a_path() {
 fn keeps_comments_and_key_order() {
     // The point of handing back a document rather than a struct: a program
     // showing a person what is in a container shows them what they wrote.
-    let doc = "# who owns this\nslipcase_version = \"1.0\"\nzzz = 1\naaa = 2\n\n[payload]\nfile = \"absent.pdf\"\n";
-    let bytes = raw_zip(&[Member::new(METADATA_MEMBER, doc.as_bytes())]);
-    assert_eq!(metadata_of(&bytes).unwrap().to_string(), doc);
+    let doc = "# who owns this\nslipcase_version = \"1.1\"\nzzz = 1\naaa = 2\n\n[content]\nfile = \"absent.pdf\"\n";
+    let bytes = raw_zip(&[Member::new(FLYLEAF_MEMBER, doc.as_bytes())]);
+    assert_eq!(flyleaf_of(&bytes).unwrap().to_string(), doc);
 }
 
 #[test]
 fn refuses_what_spec_2_2_requires_of_the_member_itself() {
-    // One metadata member, valid TOML, UTF-8. Everything past that is another
+    // One flyleaf member, valid TOML, UTF-8. Everything past that is another
     // function's question.
     let no_member = raw_zip(&[Member::new("report.pdf", b"x")]);
     assert!(matches!(
-        metadata_of(&no_member),
-        Err(Error::Malformed(Malformed::NoMetadataMember))
+        flyleaf_of(&no_member),
+        Err(Error::Malformed(Malformed::NoFlyleafMember))
     ));
 
     let two = raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
-        Member::new(METADATA_MEMBER, metadata("b.txt").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
+        Member::new(FLYLEAF_MEMBER, flyleaf("b.txt").as_bytes()),
     ]);
     assert!(matches!(
-        metadata_of(&two),
-        Err(Error::Malformed(Malformed::DuplicateMetadataMember(2)))
+        flyleaf_of(&two),
+        Err(Error::Malformed(Malformed::DuplicateFlyleafMember(2)))
     ));
 
-    let not_toml = raw_zip(&[Member::new(METADATA_MEMBER, b"= not a document\n")]);
+    let not_toml = raw_zip(&[Member::new(FLYLEAF_MEMBER, b"= not a document\n")]);
     assert!(matches!(
-        metadata_of(&not_toml),
-        Err(Error::Malformed(Malformed::MetadataNotToml(_)))
+        flyleaf_of(&not_toml),
+        Err(Error::Malformed(Malformed::FlyleafNotToml(_)))
     ));
 
-    let not_utf8 = raw_zip(&[Member::new(METADATA_MEMBER, b"title = \"\xff\xfe\"\n")]);
+    let not_utf8 = raw_zip(&[Member::new(FLYLEAF_MEMBER, b"title = \"\xff\xfe\"\n")]);
     assert!(matches!(
-        metadata_of(&not_utf8),
-        Err(Error::Malformed(Malformed::MetadataNotUtf8))
+        flyleaf_of(&not_utf8),
+        Err(Error::Malformed(Malformed::FlyleafNotUtf8))
     ));
 }
 
@@ -786,7 +786,7 @@ fn refuses_what_spec_2_2_requires_of_the_member_itself() {
 // SPEC 6: what a reader spends before it knows what it is holding
 // ---------------------------------------------------------------------------
 
-/// A metadata member over the bound is undetermined, not non-conformant.
+/// A flyleaf member over the bound is undetermined, not non-conformant.
 ///
 /// Catches a reader that answers `NonConformant` when it runs out of its own
 /// allowance. The bound belongs to the reader, so answering that would publish
@@ -794,13 +794,13 @@ fn refuses_what_spec_2_2_requires_of_the_member_itself() {
 /// readers with different bounds would disagree about conformance — which is
 /// the disagreement SPEC 3 exists to prevent.
 #[test]
-fn a_metadata_member_over_the_bound_is_undetermined() {
-    let bytes = container("report.pdf", b"payload\n");
+fn a_flyleaf_member_over_the_bound_is_undetermined() {
+    let bytes = container("report.pdf", b"content\n");
     let mut limits = slpc::Limits::default();
-    limits.metadata_bytes = 8;
+    limits.flyleaf_bytes = 8;
 
     match slpc::validate_with(std::io::Cursor::new(bytes.clone()), limits) {
-        Ok(slpc::Verdict::Undetermined(Unsupported::MetadataTooLarge { limit, .. })) => {
+        Ok(slpc::Verdict::Undetermined(Unsupported::FlyleafTooLarge { limit, .. })) => {
             assert_eq!(limit, 8);
         }
         other => panic!("expected undetermined over the bound, got {other:?}"),
@@ -824,43 +824,43 @@ fn a_metadata_member_over_the_bound_is_undetermined() {
 /// the read itself.
 #[test]
 fn a_lying_recorded_size_does_not_get_past_the_bound() {
-    let mut bytes = container("report.pdf", b"payload\n");
-    let member = metadata("report.pdf");
+    let mut bytes = container("report.pdf", b"content\n");
+    let member = flyleaf("report.pdf");
 
-    // Rewrite the central directory's uncompressed size for the metadata
+    // Rewrite the central directory's uncompressed size for the flyleaf
     // member to 1, which is under any bound worth setting.
-    let at = find_central_size_field(&bytes, slpc::METADATA_MEMBER);
+    let at = find_central_size_field(&bytes, slpc::FLYLEAF_MEMBER);
     bytes[at..at + 4].copy_from_slice(&1u32.to_le_bytes());
 
     let mut limits = slpc::Limits::default();
-    limits.metadata_bytes = (member.len() - 1) as u64;
+    limits.flyleaf_bytes = (member.len() - 1) as u64;
 
     match slpc::validate_with(std::io::Cursor::new(bytes), limits) {
-        Ok(slpc::Verdict::Undetermined(Unsupported::MetadataTooLarge { declared, .. })) => {
+        Ok(slpc::Verdict::Undetermined(Unsupported::FlyleafTooLarge { declared, .. })) => {
             assert_eq!(declared, 1, "the recorded size is reported as recorded");
         }
         other => panic!("expected the read to stop at the bound, got {other:?}"),
     }
 }
 
-/// `metadata_of` is bounded too.
+/// `flyleaf_of` is bounded too.
 ///
 /// Catches bounding one entry point and not the other. Both reach the same
 /// member by the same route and are exposed to the same thing, so a caller who
-/// bounded `Container::read` and then called `metadata_of` would have bounded
+/// bounded `Container::read` and then called `flyleaf_of` would have bounded
 /// nothing. The desktop viewer calls this one.
 #[test]
-fn metadata_of_is_bounded_as_well() {
-    let bytes = container("report.pdf", b"payload\n");
+fn flyleaf_of_is_bounded_as_well() {
+    let bytes = container("report.pdf", b"content\n");
     let mut limits = slpc::Limits::default();
-    limits.metadata_bytes = 8;
+    limits.flyleaf_bytes = 8;
     assert!(matches!(
-        slpc::metadata_of_with(std::io::Cursor::new(bytes), limits),
-        Err(Error::Unsupported(Unsupported::MetadataTooLarge { .. }))
+        slpc::flyleaf_of_with(std::io::Cursor::new(bytes), limits),
+        Err(Error::Unsupported(Unsupported::FlyleafTooLarge { .. }))
     ));
 }
 
-/// Where the metadata member's recorded uncompressed size sits in the archive.
+/// Where the flyleaf member's recorded uncompressed size sits in the archive.
 fn find_central_size_field(bytes: &[u8], name: &str) -> usize {
     let eocd = bytes
         .windows(4)
@@ -890,30 +890,30 @@ fn find_central_size_field(bytes: &[u8], name: &str) -> usize {
 /// A recorded mode comes back, with the file-type bits masked off.
 ///
 /// Catches an accessor that hands back the whole mode. A caller asking whether
-/// a payload was executable tests `& 0o111`, and `0o100_755 & 0o111` and
+/// a content file was executable tests `& 0o111`, and `0o100_755 & 0o111` and
 /// `0o755 & 0o111` agree — but a caller printing the answer, or comparing it to
 /// a mode of its own, would see `0o100755` and be wrong about what it means.
 #[test]
 fn a_recorded_mode_comes_back_without_its_file_type_bits() {
     let bytes = raw_zip(&[
-        Member::new(slpc::METADATA_MEMBER, metadata("build.sh").as_bytes()),
+        Member::new(slpc::FLYLEAF_MEMBER, flyleaf("build.sh").as_bytes()),
         Member::new("build.sh", b"#!/bin/sh\n").with_mode(0o100_755),
     ]);
-    assert_eq!(open(&bytes).unwrap().payload_mode().unwrap(), Some(0o755));
+    assert_eq!(open(&bytes).unwrap().content_mode().unwrap(), Some(0o755));
 }
 
-/// A setuid payload is reported as setuid and not swallowed.
+/// A setuid content file is reported as setuid and not swallowed.
 ///
 /// Catches masking to `0o777` rather than `0o7777`. SPEC 2.5 lets a container
 /// record this and SPEC 3 forbids applying it, and the whole value of the
 /// accessor is that something can say so.
 #[test]
-fn a_setuid_payload_is_reported() {
+fn a_setuid_content_is_reported() {
     let bytes = raw_zip(&[
-        Member::new(slpc::METADATA_MEMBER, metadata("tool").as_bytes()),
+        Member::new(slpc::FLYLEAF_MEMBER, flyleaf("tool").as_bytes()),
         Member::new("tool", b"\x7fELF\n").with_mode(0o104_755),
     ]);
-    assert_eq!(open(&bytes).unwrap().payload_mode().unwrap(), Some(0o4755));
+    assert_eq!(open(&bytes).unwrap().content_mode().unwrap(), Some(0o4755));
 }
 
 /// A container recording no mode says nothing, rather than saying 0o664.
@@ -929,16 +929,16 @@ fn a_setuid_payload_is_reported() {
 #[test]
 fn a_container_recording_no_mode_says_nothing() {
     let bytes = raw_zip(&[
-        Member::new(slpc::METADATA_MEMBER, metadata("report.pdf").as_bytes()).dos_made(),
+        Member::new(slpc::FLYLEAF_MEMBER, flyleaf("report.pdf").as_bytes()).dos_made(),
         Member::new("report.pdf", b"%PDF\n").dos_made(),
     ]);
-    assert_eq!(open(&bytes).unwrap().payload_mode().unwrap(), None);
+    assert_eq!(open(&bytes).unwrap().content_mode().unwrap(), None);
 
     // The container still opens, which is the other half: SPEC 2.3 requires a
     // regular file entry, and `EntryKind` answers that one by defaulting to
     // regular where the archive is silent. Only the permissions are unknowable,
     // and only they go quiet.
-    assert_eq!(open(&bytes).unwrap().payload_name(), "report.pdf");
+    assert_eq!(open(&bytes).unwrap().content_name(), "report.pdf");
 }
 
 // ---------------------------------------------------------------------------
@@ -947,9 +947,9 @@ fn a_container_recording_no_mode_says_nothing() {
 
 /// An archive with two members named `report.pdf`, plus whatever the caller
 /// does to the end of central directory record afterwards.
-fn duplicate_payload_archive() -> Vec<u8> {
+fn duplicate_content_archive() -> Vec<u8> {
     raw_zip(&[
-        Member::new(slpc::METADATA_MEMBER, metadata("report.pdf").as_bytes()),
+        Member::new(slpc::FLYLEAF_MEMBER, flyleaf("report.pdf").as_bytes()),
         Member::new("report.pdf", b"FIRST\n"),
         Member::new("report.pdf", b"SECOND\n"),
     ])
@@ -970,13 +970,13 @@ fn eocd_at(bytes: &[u8]) -> usize {
 /// record is *entries on this disk* and byte 10 is *entries in total*; this
 /// crate counted the total and its ZIP dependency counts the ones on this disk.
 /// Declaring three and two therefore hid the third member from the duplicate
-/// check while leaving it in the archive the payload is read from — a
-/// conformant verdict over one set of members and a payload served from
+/// check while leaving it in the archive the content file is read from — a
+/// conformant verdict over one set of members and a content file served from
 /// another. Measured 2026-08-27. Set both fields to 3 and the duplicate is
 /// caught the ordinary way, which is the assertion below it.
 #[test]
 fn the_two_entry_counts_must_agree() {
-    let mut bytes = duplicate_payload_archive();
+    let mut bytes = duplicate_content_archive();
     let at = eocd_at(&bytes);
     bytes[at + 10..at + 12].copy_from_slice(&2u16.to_le_bytes());
 
@@ -1005,7 +1005,7 @@ fn the_two_entry_counts_must_agree() {
 /// found not to discriminate either — is what covers the split itself.
 #[test]
 fn the_record_must_end_the_file() {
-    let mut bytes = duplicate_payload_archive();
+    let mut bytes = duplicate_content_archive();
     let at = eocd_at(&bytes);
     bytes[at + 20..at + 22].copy_from_slice(&0xFFFFu16.to_le_bytes());
 
@@ -1034,7 +1034,7 @@ fn a_multi_disk_archive_is_refused() {
     // An otherwise ordinary container, so the disk field is the only thing
     // there is to reject it for. Built with the duplicate removed, and asserted
     // conformant first, or this would pass for the wrong reason.
-    let good = container("report.pdf", b"payload\n");
+    let good = container("report.pdf", b"content\n");
     assert!(slpc::validate(std::io::Cursor::new(good.clone()))
         .unwrap()
         .is_conformant());
@@ -1059,12 +1059,12 @@ fn a_multi_disk_archive_is_refused() {
 /// and the offset. So a plain record that is complete, consistent, and merely
 /// understates the entry count — with the size field carrying the only sentinel
 /// — sent the two readers to different records, and the member visible to just
-/// one of them was a duplicate payload.
+/// one of them was a duplicate content file.
 ///
 /// Change the gate back to `count || offset` and this reports conformant.
 #[test]
 fn the_zip64_record_is_consulted_on_the_size_sentinel() {
-    let plain = duplicate_payload_archive();
+    let plain = duplicate_content_archive();
     let at = eocd_at(&plain);
     let count = u16::from_le_bytes(plain[at + 10..at + 12].try_into().unwrap());
     let size = u32::from_le_bytes(plain[at + 12..at + 16].try_into().unwrap());
@@ -1137,7 +1137,7 @@ fn a_member_cannot_be_renamed_by_an_extra_field() {
     let mut evil = Member::new("evil.bin", b"EVIL\n");
     evil.extra = unicode_path(b"evil.bin", b"report.pdf");
     let bytes = raw_zip(&[
-        Member::new(slpc::METADATA_MEMBER, metadata("report.pdf").as_bytes()),
+        Member::new(slpc::FLYLEAF_MEMBER, flyleaf("report.pdf").as_bytes()),
         Member::new("report.pdf", b"BENIGN\n"),
         evil,
     ]);
@@ -1164,11 +1164,11 @@ fn ordinary_extra_fields_are_not_refused() {
     let mut benign = field(0x5455, &[3, 0, 0, 0, 0, 0, 0, 0, 0]);
     benign.extend_from_slice(&field(0x7875, &[1, 4, 232, 3, 0, 0, 4, 232, 3, 0, 0]));
 
-    let mut meta = Member::new(slpc::METADATA_MEMBER, metadata("report.pdf").as_bytes());
+    let mut meta = Member::new(slpc::FLYLEAF_MEMBER, flyleaf("report.pdf").as_bytes());
     meta.extra = benign.clone();
-    let mut payload = Member::new("report.pdf", b"payload\n");
-    payload.extra = benign;
+    let mut content = Member::new("report.pdf", b"content\n");
+    content.extra = benign;
 
-    let verdict = slpc::validate(std::io::Cursor::new(raw_zip(&[meta, payload]))).unwrap();
+    let verdict = slpc::validate(std::io::Cursor::new(raw_zip(&[meta, content]))).unwrap();
     assert!(verdict.is_conformant(), "{verdict}");
 }

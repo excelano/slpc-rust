@@ -192,7 +192,7 @@ mod permissions {
 
         assert!(link.is_symlink(), "the link was replaced by a file");
         let c = slpc::Container::open(&real).unwrap();
-        assert_eq!(c.payload_name(), "b.txt");
+        assert_eq!(c.content_name(), "b.txt");
     }
 
     #[test]
@@ -202,10 +202,10 @@ mod permissions {
     }
 }
 
-/// Where a container's payload name becomes a path, and what it is shown as.
-mod payload_paths {
+/// Where a container's content name becomes a path, and what it is shown as.
+mod content_paths {
     use super::sandbox;
-    use slpc::{display_path, payload_path};
+    use slpc::{display_path, content_path};
     use std::path::Path;
 
     /// Every name Win32 resolves to a device wherever it appears. `LPT1` and
@@ -219,14 +219,14 @@ mod payload_paths {
     #[cfg(windows)]
     const DEVICE_NAMES: [&str; 8] = ["CON", "CON.txt", "con", "COM1", "AUX", "LPT1", "PRN", "NUL"];
 
-    /// The defect this catches is a payload landing on a device instead of in
+    /// The defect this catches is a content file landing on a device instead of in
     /// the directory. `dir.join("CON")` is not a path in `dir` on Windows — it
     /// is the console — so extraction wrote to the terminal, left no file, and
     /// anything reading the result back waited forever on input that never
-    /// came. `check_payload_name` accepts these names because SPEC 2.3 does,
+    /// came. `check_content_name` accepts these names because SPEC 2.3 does,
     /// and the conformance corpus carries a case for one.
     ///
-    /// The directory is listed before the payload is read, and that order is
+    /// The directory is listed before the content file is read, and that order is
     /// deliberate: against the defect the listing is empty and this fails
     /// there, where reading first would hang the whole suite instead.
     #[test]
@@ -236,8 +236,8 @@ mod payload_paths {
             let dir = sandbox();
             let bytes = format!("bytes for {name}").into_bytes();
 
-            let path = payload_path(dir.path(), name).expect("a path for the name");
-            std::fs::write(&path, &bytes).expect("writes the payload");
+            let path = content_path(dir.path(), name).expect("a path for the name");
+            std::fs::write(&path, &bytes).expect("writes the content file");
 
             let listed: Vec<_> = std::fs::read_dir(dir.path())
                 .expect("the directory")
@@ -245,37 +245,37 @@ mod payload_paths {
                 .collect();
             assert!(
                 listed.iter().any(|entry| entry == name),
-                "{name}: nothing by that name is in the directory, so the payload went \
+                "{name}: nothing by that name is in the directory, so the content file went \
                  to a device rather than to a file. Listed: {listed:?}"
             );
 
             assert_eq!(
-                std::fs::read(&path).expect("reads the payload back"),
+                std::fs::read(&path).expect("reads the content file back"),
                 bytes,
                 "{name}: what came back is not what was written"
             );
-            std::fs::remove_file(&path).expect("the payload is removable");
+            std::fs::remove_file(&path).expect("the content file is removable");
         }
     }
 
     /// An ordinary name lands where it always did, on every platform. The
-    /// defect this catches is the repair above changing where a payload goes
+    /// defect this catches is the repair above changing where a content file goes
     /// for the overwhelming majority of names, which have never had a problem.
     ///
     /// It asks whether the path names the same file, not whether it is spelled
     /// the same way, and the difference is a measurement. This test first
     /// compared the two as strings and failed on the Windows runner with
     /// `C:\Users\runneradmin\…` against `C:\Users\RUNNER~1\…`: `canonicalize`
-    /// expands 8.3 short names as well as adding the prefix. So `payload_path`
+    /// expands 8.3 short names as well as adding the prefix. So `content_path`
     /// reports where the file *is* rather than how the caller spelled it, and
     /// asserting the spelling would have been asserting something untrue.
     #[test]
     fn an_ordinary_name_lands_in_the_directory_it_was_given() {
         let dir = sandbox();
-        let path = payload_path(dir.path(), "report.pdf").expect("a path");
+        let path = content_path(dir.path(), "report.pdf").expect("a path");
 
-        std::fs::write(&path, b"payload").expect("writes");
-        assert_eq!(std::fs::read(&path).expect("reads back"), b"payload");
+        std::fs::write(&path, b"content").expect("writes");
+        assert_eq!(std::fs::read(&path).expect("reads back"), b"content");
         assert_eq!(path.file_name().expect("a filename"), "report.pdf");
 
         // The same file, asked of the filesystem rather than of the two
@@ -283,7 +283,7 @@ mod payload_paths {
         assert_eq!(
             std::fs::canonicalize(&path).expect("the path resolves"),
             std::fs::canonicalize(dir.path().join("report.pdf")).expect("so does the join"),
-            "the payload did not land in the directory it was given"
+            "the content file did not land in the directory it was given"
         );
         assert!(
             !display_path(&path).contains(r"\\?\"),
@@ -293,7 +293,7 @@ mod payload_paths {
 
     /// The defect this catches is a missing directory being reported without
     /// being named. `canonicalize` says only *The system cannot find the file
-    /// specified*, and the first version of `payload_path` passed that straight
+    /// specified*, and the first version of `content_path` passed that straight
     /// on — so `slipcase unpack --dest nowhere` stopped naming `nowhere`, which
     /// it had named before this function existed. An existing CLI test caught
     /// it on the Windows runner.
@@ -303,7 +303,7 @@ mod payload_paths {
         let dir = sandbox();
         let missing = dir.path().join("no-such-directory");
 
-        let said = payload_path(&missing, "report.pdf")
+        let said = content_path(&missing, "report.pdf")
             .expect_err("a directory that is not there is an error")
             .to_string();
         assert!(
@@ -316,7 +316,7 @@ mod payload_paths {
         );
     }
 
-    /// The defect this catches is a person being told their payload went
+    /// The defect this catches is a person being told their content file went
     /// somewhere they have never seen and could not type. Nothing else takes
     /// the prefix off, so a caller that reaches for `Path::display` directly
     /// prints `\\?\C:\…`.
@@ -351,13 +351,13 @@ mod payload_paths {
 
 /// The defect this catches is a refusal telling somebody that
 /// `\\?\C:\…\report.pdf` exists — a spelling they have never seen and did not
-/// write. `payload_path` is what can put a verbatim path into this message, so
+/// write. `content_path` is what can put a verbatim path into this message, so
 /// it is what makes this reachable.
 #[test]
 #[cfg(windows)]
 fn a_refusal_names_the_file_the_way_a_person_wrote_it() {
     let dir = sandbox();
-    let path = slpc::payload_path(dir.path(), "report.pdf").expect("a path");
+    let path = slpc::content_path(dir.path(), "report.pdf").expect("a path");
     std::fs::write(&path, b"already here").expect("the file in the way");
 
     let refusal = Destination::new(&path, false).expect_err("must refuse");
@@ -402,7 +402,7 @@ fn a_file_that_arrives_after_the_check_is_still_not_replaced() {
     );
 }
 
-/// A setuid payload lands as an ordinary file, not as a setuid one.
+/// A setuid content file lands as an ordinary file, not as a setuid one.
 ///
 /// SPEC 3 forbids applying the permission bits an archive records, and SPEC 2.5
 /// lets a conformant container record any of them — so a faithful extraction
@@ -410,33 +410,33 @@ fn a_file_that_arrives_after_the_check_is_still_not_replaced() {
 /// setuid file on disk from a container nobody could reject.
 ///
 /// This library cannot do that, because the half that reads an archive and the
-/// half that writes a file never meet: `Container::payload` hands back a reader
+/// half that writes a file never meet: `Container::content` hands back a reader
 /// and `Destination` takes a path. The test is here to catch somebody wiring
 /// them together, which is a two-line change and a plausible one — the mode is
-/// right there in `payload_mode` now, and it reads like something extraction
+/// right there in `content_mode` now, and it reads like something extraction
 /// ought to honour.
 #[test]
 #[cfg(unix)]
-fn a_setuid_payload_does_not_extract_as_setuid() {
+fn a_setuid_content_does_not_extract_as_setuid() {
     use std::os::unix::fs::PermissionsExt as _;
 
     let archive = support::raw_zip(&[
-        support::Member::new(slpc::METADATA_MEMBER, support::metadata("tool").as_bytes()),
-        support::Member::new("tool", b"\x7fELF payload\n").with_mode(0o104_755),
+        support::Member::new(slpc::FLYLEAF_MEMBER, support::flyleaf("tool").as_bytes()),
+        support::Member::new("tool", b"\x7fELF content\n").with_mode(0o104_755),
     ]);
 
     let s = sandbox();
     let mut c = slpc::Container::read(std::io::Cursor::new(archive)).unwrap();
     assert_eq!(
-        c.payload_mode().unwrap(),
+        c.content_mode().unwrap(),
         Some(0o4755),
         "the fixture records it"
     );
 
     // What `slipcase unpack` does, in the order it does it.
-    let out = s.path().join(c.payload_name());
+    let out = s.path().join(c.content_name());
     let mut d = Destination::new(&out, false).unwrap();
-    std::io::copy(&mut c.payload().unwrap(), d.writer()).unwrap();
+    std::io::copy(&mut c.content().unwrap(), d.writer()).unwrap();
     d.commit().unwrap();
 
     let landed = std::fs::metadata(&out).unwrap().permissions().mode() & 0o7777;

@@ -9,7 +9,7 @@ use std::fmt;
 ///
 /// Two exit codes reach here. Most failures are exit 1, bad input. The
 /// exception is a container this build can say nothing about: SPEC 3 forbids
-/// reporting one as conformant or as non-conformant when its metadata member
+/// reporting one as conformant or as non-conformant when its flyleaf member
 /// cannot be read, and SPEC 2.4 puts a container declaring another version
 /// outside the question rather than failing it. Both of those are exit 3.
 ///
@@ -60,7 +60,7 @@ impl From<slpc::Error> for Failure {
     fn from(e: slpc::Error) -> Self {
         // An Unsupported error means this build cannot speak to the container,
         // which is the exit 3 case wherever it surfaces, not just under
-        // `validate`. Refusing to unpack a payload compressed beyond this build
+        // `validate`. Refusing to unpack a content file compressed beyond this build
         // is the same kind of answer.
         match e {
             slpc::Error::Unsupported(_) => Self::no_verdict(e.to_string()),

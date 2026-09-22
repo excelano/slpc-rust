@@ -1,4 +1,4 @@
-// The write path: packing a container, and rewriting one's metadata.
+// The write path: packing a container, and rewriting one's flyleaf.
 //
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
@@ -6,9 +6,9 @@
 mod support;
 
 use std::io::{Read, Write};
-use support::{metadata, open, payload_of, raw_zip, Member};
+use support::{flyleaf, open, content_of, raw_zip, Member};
 
-use slpc::{Error, Malformed, NameError, Unsupported, METADATA_MEMBER, VERSION_KEY};
+use slpc::{Error, Malformed, NameError, Unsupported, FLYLEAF_MEMBER, VERSION_KEY};
 use toml_edit::DocumentMut;
 
 /// A sink that is only a `Write`, to hold the writer bound honest.
@@ -79,16 +79,16 @@ fn packs_a_container_that_reads_back() {
     let mut out = WriteOnly::default();
     slpc::pack_reader(
         "report.pdf",
-        pipe(b"payload\n"),
+        pipe(b"content\n"),
         DocumentMut::new(),
         &mut out,
     )
     .unwrap();
 
     let mut c = open(&out.0).unwrap();
-    assert_eq!(c.version(), "1.0");
-    assert_eq!(c.payload_name(), "report.pdf");
-    assert_eq!(payload_of(&mut c), b"payload\n");
+    assert_eq!(c.version(), "1.1");
+    assert_eq!(c.content_name(), "report.pdf");
+    assert_eq!(content_of(&mut c), b"content\n");
 }
 
 #[test]
@@ -97,12 +97,12 @@ fn sets_both_required_keys_itself() {
     slpc::pack_reader("a.txt", pipe(b"x"), DocumentMut::new(), &mut out).unwrap();
 
     let c = open(&out.0).unwrap();
-    assert_eq!(c.metadata()[VERSION_KEY].as_str(), Some("1.0"));
-    assert_eq!(c.metadata()["payload"]["file"].as_str(), Some("a.txt"));
+    assert_eq!(c.flyleaf()[VERSION_KEY].as_str(), Some("1.1"));
+    assert_eq!(c.flyleaf()["content"]["file"].as_str(), Some("a.txt"));
 }
 
 #[test]
-fn the_metadata_it_generates_looks_like_the_specification_example() {
+fn the_flyleaf_it_generates_looks_like_the_specification_example() {
     // Not a conformance rule: an inline table would be valid TOML and a
     // conformant container. It is that this is the implementation whose output
     // everyone will copy, so what it writes should look like SPEC 2.2.
@@ -111,33 +111,33 @@ fn the_metadata_it_generates_looks_like_the_specification_example() {
 
     let c = open(&out.0).unwrap();
     assert_eq!(
-        String::from_utf8_lossy(c.metadata_bytes()),
-        "slipcase_version = \"1.0\"\n\n[payload]\nfile = \"report.pdf\"\n"
+        String::from_utf8_lossy(c.flyleaf_bytes()),
+        "slipcase_version = \"1.1\"\n\n[content]\nfile = \"report.pdf\"\n"
     );
 }
 
 #[test]
-fn passes_everything_else_in_the_metadata_through() {
+fn passes_everything_else_in_the_flyleaf_through() {
     let given = doc("title = \"Q3 results\"\n\n[custom]\nnested = { deep = [1, 2] }\n");
     let mut out = WriteOnly::default();
     slpc::pack_reader("a.txt", pipe(b"x"), given, &mut out).unwrap();
 
     let c = open(&out.0).unwrap();
-    assert_eq!(c.metadata()["title"].as_str(), Some("Q3 results"));
-    assert!(c.metadata()["custom"]["nested"]["deep"].is_array());
+    assert_eq!(c.flyleaf()["title"].as_str(), Some("Q3 results"));
+    assert!(c.flyleaf()["custom"]["nested"]["deep"].is_array());
 }
 
 #[test]
-fn accepts_metadata_that_already_agrees() {
-    let given = doc("slipcase_version = \"1.0\"\n\n[payload]\nfile = \"a.txt\"\n");
+fn accepts_flyleaf_that_already_agrees() {
+    let given = doc("slipcase_version = \"1.1\"\n\n[content]\nfile = \"a.txt\"\n");
     let mut out = WriteOnly::default();
     slpc::pack_reader("a.txt", pipe(b"x"), given, &mut out).unwrap();
-    assert_eq!(open(&out.0).unwrap().payload_name(), "a.txt");
+    assert_eq!(open(&out.0).unwrap().content_name(), "a.txt");
 }
 
 #[test]
-fn refuses_metadata_that_names_a_different_payload() {
-    let given = doc("[payload]\nfile = \"something-else.txt\"\n");
+fn refuses_flyleaf_that_names_a_different_content() {
+    let given = doc("[content]\nfile = \"something-else.txt\"\n");
     let e = slpc::pack_reader("a.txt", pipe(b"x"), given, WriteOnly::default()).unwrap_err();
     match e {
         Error::Malformed(Malformed::Disagrees {
@@ -145,7 +145,7 @@ fn refuses_metadata_that_names_a_different_payload() {
             found,
             writing,
         }) => {
-            assert_eq!(key, "payload.file");
+            assert_eq!(key, "content.file");
             assert_eq!(found, "something-else.txt");
             assert_eq!(writing, "a.txt");
         }
@@ -154,7 +154,7 @@ fn refuses_metadata_that_names_a_different_payload() {
 }
 
 #[test]
-fn refuses_metadata_that_claims_a_different_version() {
+fn refuses_flyleaf_that_claims_a_different_version() {
     let given = doc("slipcase_version = \"9.4\"\n");
     let e = slpc::pack_reader("a.txt", pipe(b"x"), given, WriteOnly::default()).unwrap_err();
     assert!(matches!(
@@ -167,44 +167,44 @@ fn refuses_metadata_that_claims_a_different_version() {
 }
 
 #[test]
-fn refuses_metadata_whose_payload_is_not_a_table() {
-    let given = doc("payload = 3\n");
+fn refuses_flyleaf_whose_content_is_not_a_table() {
+    let given = doc("content = 3\n");
     let e = slpc::pack_reader("a.txt", pipe(b"x"), given, WriteOnly::default()).unwrap_err();
-    assert!(matches!(e, Error::Malformed(Malformed::PayloadNotATable)));
+    assert!(matches!(e, Error::Malformed(Malformed::ContentNotATable)));
 }
 
 #[test]
-fn refuses_a_payload_name_that_is_not_a_plain_filename() {
+fn refuses_a_content_name_that_is_not_a_plain_filename() {
     for (name, want) in [
         ("", NameError::Empty),
         ("..", NameError::Relative),
         ("../etc/passwd", NameError::Separator('/')),
         ("a\\b", NameError::Separator('\\')),
         ("C:evil", NameError::Colon),
-        (METADATA_MEMBER, NameError::ReservedForMetadata),
+        (FLYLEAF_MEMBER, NameError::ReservedForFlyleaf),
     ] {
         let e = slpc::pack_reader(name, pipe(b"x"), DocumentMut::new(), WriteOnly::default())
             .unwrap_err();
         match e {
-            Error::Malformed(Malformed::PayloadName(got)) => assert_eq!(got, want, "{name:?}"),
-            other => panic!("expected PayloadName for {name:?}, got {other:?}"),
+            Error::Malformed(Malformed::ContentName(got)) => assert_eq!(got, want, "{name:?}"),
+            other => panic!("expected ContentName for {name:?}, got {other:?}"),
         }
     }
 }
 
 #[test]
-fn packs_a_payload_of_unknown_length_into_a_writer_that_cannot_seek() {
+fn packs_a_content_of_unknown_length_into_a_writer_that_cannot_seek() {
     // Neither end is seekable, which is the case the reader form exists for.
-    let payload: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+    let content: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
     let mut out = WriteOnly::default();
-    slpc::pack_reader("big.bin", pipe(&payload), DocumentMut::new(), &mut out).unwrap();
+    slpc::pack_reader("big.bin", pipe(&content), DocumentMut::new(), &mut out).unwrap();
 
     let mut c = open(&out.0).unwrap();
-    assert_eq!(payload_of(&mut c), payload);
+    assert_eq!(content_of(&mut c), content);
 }
 
 #[test]
-fn a_non_ascii_payload_name_round_trips() {
+fn a_non_ascii_content_name_round_trips() {
     let mut out = WriteOnly::default();
     slpc::pack_reader(
         "caf\u{e9} r\u{e9}sum\u{e9}.txt",
@@ -214,7 +214,7 @@ fn a_non_ascii_payload_name_round_trips() {
     )
     .unwrap();
     let c = open(&out.0).unwrap();
-    assert_eq!(c.payload_name(), "caf\u{e9} r\u{e9}sum\u{e9}.txt");
+    assert_eq!(c.content_name(), "caf\u{e9} r\u{e9}sum\u{e9}.txt");
 }
 
 #[test]
@@ -236,22 +236,22 @@ fn pack_file_takes_the_name_from_the_path() {
     let mut out = WriteOnly::default();
     slpc::pack_file(&path, DocumentMut::new(), &mut out).unwrap();
     let mut c = open(&out.0).unwrap();
-    assert_eq!(c.payload_name(), "report.pdf");
-    assert_eq!(payload_of(&mut c), b"on disk\n");
+    assert_eq!(c.content_name(), "report.pdf");
+    assert_eq!(content_of(&mut c), b"on disk\n");
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
 fn pack_file_names_the_path_when_the_file_cannot_be_packed_as_itself() {
-    // A directory entry, so there is no filename to take payload.file from.
+    // A directory entry, so there is no filename to take content.file from.
     let e = slpc::pack_file("..", DocumentMut::new(), WriteOnly::default()).unwrap_err();
     match e {
-        Error::Malformed(Malformed::PayloadPathName { path, cause }) => {
+        Error::Malformed(Malformed::ContentPathName { path, cause }) => {
             assert_eq!(path, std::path::Path::new(".."));
             assert_eq!(cause, NameError::Empty);
         }
-        other => panic!("expected PayloadPathName, got {other:?}"),
+        other => panic!("expected ContentPathName, got {other:?}"),
     }
 }
 
@@ -259,37 +259,37 @@ fn pack_file_names_the_path_when_the_file_cannot_be_packed_as_itself() {
 
 fn source_with_extras() -> Vec<u8> {
     raw_zip(&[
-        Member::new(METADATA_MEMBER, metadata("a.txt").as_bytes()),
-        Member::new("a.txt", b"payload\n"),
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
+        Member::new("a.txt", b"content\n"),
         Member::new("notes.md", b"a member nothing here understands\n"),
         Member::new("opaque.bin", b"pretend this is bzip2").claims_method(12),
     ])
 }
 
 #[test]
-fn rewriting_replaces_the_metadata_and_keeps_everything_else() {
+fn rewriting_replaces_the_flyleaf_and_keeps_everything_else() {
     let src = source_with_extras();
     let new =
-        "slipcase_version = \"1.0\"\ntitle = \"added later\"\n\n[payload]\nfile = \"a.txt\"\n";
+        "slipcase_version = \"1.1\"\ntitle = \"added later\"\n\n[content]\nfile = \"a.txt\"\n";
 
     let mut out = Seekable::default();
-    slpc::rewrite_metadata_bytes(std::io::Cursor::new(src.clone()), new.as_bytes(), &mut out)
+    slpc::rewrite_flyleaf_bytes(std::io::Cursor::new(src.clone()), new.as_bytes(), &mut out)
         .unwrap();
 
     let mut c = open(out.bytes()).unwrap();
-    assert_eq!(c.metadata()["title"].as_str(), Some("added later"));
-    assert_eq!(payload_of(&mut c), b"payload\n");
+    assert_eq!(c.flyleaf()["title"].as_str(), Some("added later"));
+    assert_eq!(content_of(&mut c), b"content\n");
 
     let names: Vec<String> = members(out.bytes()).into_iter().map(|(n, _)| n).collect();
-    assert_eq!(names, [METADATA_MEMBER, "a.txt", "notes.md", "opaque.bin"]);
+    assert_eq!(names, [FLYLEAF_MEMBER, "a.txt", "notes.md", "opaque.bin"]);
 }
 
 #[test]
 fn rewriting_copies_a_member_it_cannot_decompress() {
     let src = source_with_extras();
-    let new = metadata("a.txt");
+    let new = flyleaf("a.txt");
     let mut out = Seekable::default();
-    slpc::rewrite_metadata_bytes(std::io::Cursor::new(src), new.as_bytes(), &mut out).unwrap();
+    slpc::rewrite_flyleaf_bytes(std::io::Cursor::new(src), new.as_bytes(), &mut out).unwrap();
 
     let opaque = members(out.bytes())
         .into_iter()
@@ -301,64 +301,64 @@ fn rewriting_copies_a_member_it_cannot_decompress() {
 #[test]
 fn rewriting_stores_the_bytes_exactly_as_handed_in() {
     let src = source_with_extras();
-    let new = "# hand written, and it stays that way\nslipcase_version   =   \"1.0\"\n\n[payload]\nfile = \"a.txt\"   # kept\n";
+    let new = "# hand written, and it stays that way\nslipcase_version   =   \"1.1\"\n\n[content]\nfile = \"a.txt\"   # kept\n";
     let mut out = Seekable::default();
-    slpc::rewrite_metadata_bytes(std::io::Cursor::new(src), new.as_bytes(), &mut out).unwrap();
+    slpc::rewrite_flyleaf_bytes(std::io::Cursor::new(src), new.as_bytes(), &mut out).unwrap();
 
-    assert_eq!(open(out.bytes()).unwrap().metadata_bytes(), new.as_bytes());
+    assert_eq!(open(out.bytes()).unwrap().flyleaf_bytes(), new.as_bytes());
 }
 
 #[test]
 fn rewriting_from_a_document_keeps_its_formatting() {
     let src = source_with_extras();
     let mut d: DocumentMut =
-        "# a comment\nslipcase_version = \"1.0\"\n\n[payload]\nfile = \"a.txt\"\n"
+        "# a comment\nslipcase_version = \"1.1\"\n\n[content]\nfile = \"a.txt\"\n"
             .parse()
             .unwrap();
     d["title"] = toml_edit::value("added");
 
     let mut out = Seekable::default();
-    slpc::rewrite_metadata(std::io::Cursor::new(src), &d, &mut out).unwrap();
+    slpc::rewrite_flyleaf(std::io::Cursor::new(src), &d, &mut out).unwrap();
 
     let c = open(out.bytes()).unwrap();
-    assert!(String::from_utf8_lossy(c.metadata_bytes()).starts_with("# a comment\n"));
-    assert_eq!(c.metadata()["title"].as_str(), Some("added"));
+    assert!(String::from_utf8_lossy(c.flyleaf_bytes()).starts_with("# a comment\n"));
+    assert_eq!(c.flyleaf()["title"].as_str(), Some("added"));
 }
 
 #[test]
-fn rewriting_may_repoint_the_payload_at_another_member() {
+fn rewriting_may_repoint_the_content_at_another_member() {
     let src = source_with_extras();
-    let new = metadata("notes.md");
+    let new = flyleaf("notes.md");
     let mut out = Seekable::default();
-    slpc::rewrite_metadata_bytes(std::io::Cursor::new(src), new.as_bytes(), &mut out).unwrap();
+    slpc::rewrite_flyleaf_bytes(std::io::Cursor::new(src), new.as_bytes(), &mut out).unwrap();
 
     let mut c = open(out.bytes()).unwrap();
-    assert_eq!(c.payload_name(), "notes.md");
-    assert_eq!(payload_of(&mut c), b"a member nothing here understands\n");
+    assert_eq!(c.content_name(), "notes.md");
+    assert_eq!(content_of(&mut c), b"a member nothing here understands\n");
 }
 
 #[test]
-fn rewriting_refuses_metadata_naming_a_member_that_is_not_there() {
+fn rewriting_refuses_flyleaf_naming_a_member_that_is_not_there() {
     let src = source_with_extras();
-    let new = metadata("absent.txt");
-    let e = slpc::rewrite_metadata_bytes(
+    let new = flyleaf("absent.txt");
+    let e = slpc::rewrite_flyleaf_bytes(
         std::io::Cursor::new(src),
         new.as_bytes(),
         Seekable::default(),
     )
     .unwrap_err();
-    assert!(matches!(e, Error::Malformed(Malformed::NoPayloadMember(_))));
+    assert!(matches!(e, Error::Malformed(Malformed::NoContentMember(_))));
 }
 
 #[test]
-fn rewriting_refuses_metadata_that_is_not_a_conformant_document() {
+fn rewriting_refuses_flyleaf_that_is_not_a_conformant_document() {
     let src = source_with_extras();
     for (bytes, want) in [
-        (b"not = = toml\n".to_vec(), "MetadataNotToml"),
-        (b"slipcase_version = \"1.0\"\n".to_vec(), "MissingKey"),
-        (b"\xff\xfe".to_vec(), "MetadataNotUtf8"),
+        (b"not = = toml\n".to_vec(), "FlyleafNotToml"),
+        (b"slipcase_version = \"1.1\"\n".to_vec(), "MissingKey"),
+        (b"\xff\xfe".to_vec(), "FlyleafNotUtf8"),
     ] {
-        let e = slpc::rewrite_metadata_bytes(
+        let e = slpc::rewrite_flyleaf_bytes(
             std::io::Cursor::new(src.clone()),
             &bytes,
             Seekable::default(),
@@ -369,10 +369,10 @@ fn rewriting_refuses_metadata_that_is_not_a_conformant_document() {
 }
 
 #[test]
-fn rewriting_refuses_metadata_that_claims_a_version_this_build_does_not_write() {
+fn rewriting_refuses_flyleaf_that_claims_a_version_this_build_does_not_write() {
     let src = source_with_extras();
-    let new = "slipcase_version = \"9.4\"\n\n[payload]\nfile = \"a.txt\"\n";
-    let e = slpc::rewrite_metadata_bytes(
+    let new = "slipcase_version = \"9.4\"\n\n[content]\nfile = \"a.txt\"\n";
+    let e = slpc::rewrite_flyleaf_bytes(
         std::io::Cursor::new(src),
         new.as_bytes(),
         Seekable::default(),
@@ -391,13 +391,13 @@ fn rewriting_refuses_metadata_that_claims_a_version_this_build_does_not_write() 
 fn rewriting_refuses_a_source_whose_version_it_does_not_recognise() {
     let src = raw_zip(&[
         Member::new(
-            METADATA_MEMBER,
-            b"slipcase_version = \"9.4\"\n\n[payload]\nfile = \"a.txt\"\n",
+            FLYLEAF_MEMBER,
+            b"slipcase_version = \"9.4\"\n\n[content]\nfile = \"a.txt\"\n",
         ),
         Member::new("a.txt", b"x"),
     ]);
-    let new = metadata("a.txt");
-    let e = slpc::rewrite_metadata_bytes(
+    let new = flyleaf("a.txt");
+    let e = slpc::rewrite_flyleaf_bytes(
         std::io::Cursor::new(src),
         new.as_bytes(),
         Seekable::default(),
@@ -411,44 +411,44 @@ fn rewriting_refuses_a_source_whose_version_it_does_not_recognise() {
 
 #[test]
 fn rewriting_refuses_a_source_that_is_not_a_container() {
-    let src = raw_zip(&[Member::new("a.txt", b"no metadata member here")]);
-    let new = metadata("a.txt");
-    let e = slpc::rewrite_metadata_bytes(
+    let src = raw_zip(&[Member::new("a.txt", b"no flyleaf member here")]);
+    let new = flyleaf("a.txt");
+    let e = slpc::rewrite_flyleaf_bytes(
         std::io::Cursor::new(src),
         new.as_bytes(),
         Seekable::default(),
     )
     .unwrap_err();
-    assert!(matches!(e, Error::Malformed(Malformed::NoMetadataMember)));
+    assert!(matches!(e, Error::Malformed(Malformed::NoFlyleafMember)));
 }
 
 #[test]
 fn a_rewrite_survives_a_second_rewrite() {
     let src = source_with_extras();
     let mut once = Seekable::default();
-    slpc::rewrite_metadata_bytes(
+    slpc::rewrite_flyleaf_bytes(
         std::io::Cursor::new(src),
-        metadata("a.txt").as_bytes(),
+        flyleaf("a.txt").as_bytes(),
         &mut once,
     )
     .unwrap();
 
     let mut twice = Seekable::default();
-    slpc::rewrite_metadata_bytes(
+    slpc::rewrite_flyleaf_bytes(
         std::io::Cursor::new(once.bytes().to_vec()),
-        metadata("notes.md").as_bytes(),
+        flyleaf("notes.md").as_bytes(),
         &mut twice,
     )
     .unwrap();
 
     let names: Vec<String> = members(twice.bytes()).into_iter().map(|(n, _)| n).collect();
-    assert_eq!(names, [METADATA_MEMBER, "a.txt", "notes.md", "opaque.bin"]);
-    assert_eq!(open(twice.bytes()).unwrap().payload_name(), "notes.md");
+    assert_eq!(names, [FLYLEAF_MEMBER, "a.txt", "notes.md", "opaque.bin"]);
+    assert_eq!(open(twice.bytes()).unwrap().content_name(), "notes.md");
 }
 
 // --- Repacking -------------------------------------------------------------
 
-/// A container whose metadata carries a comment and a key nothing here knows.
+/// A container whose flyleaf carries a comment and a key nothing here knows.
 ///
 /// Both are what SPEC 3 requires to survive, and neither can survive by
 /// accident: a document that is parsed and re-serialized keeps them only
@@ -456,70 +456,70 @@ fn a_rewrite_survives_a_second_rewrite() {
 fn source_with_history() -> Vec<u8> {
     raw_zip(&[
         Member::new(
-            METADATA_MEMBER,
-            b"# written by hand\nslipcase_version = \"1.0\"\ntitle = \"the quarterly\"\n\n[payload]\nfile = \"a.txt\"\n",
+            FLYLEAF_MEMBER,
+            b"# written by hand\nslipcase_version = \"1.1\"\ntitle = \"the quarterly\"\n\n[content]\nfile = \"a.txt\"\n",
         ),
-        Member::new("a.txt", b"payload\n"),
+        Member::new("a.txt", b"content\n"),
         Member::new("notes.md", b"a member nothing here understands\n"),
         Member::new("opaque.bin", b"pretend this is bzip2").claims_method(12),
     ])
 }
 
 #[test]
-fn repacking_replaces_the_payload_and_keeps_everything_else() {
+fn repacking_replaces_the_content_and_keeps_everything_else() {
     let src = source_with_extras();
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(src))
-        .payload("a.txt", pipe(b"revised\n"))
+        .content("a.txt", pipe(b"revised\n"))
         .write(&mut out)
         .unwrap();
 
     let mut c = open(out.bytes()).unwrap();
-    assert_eq!(payload_of(&mut c), b"revised\n");
-    assert_eq!(c.payload_name(), "a.txt");
+    assert_eq!(content_of(&mut c), b"revised\n");
+    assert_eq!(c.content_name(), "a.txt");
 
     let names: Vec<String> = members(out.bytes()).into_iter().map(|(n, _)| n).collect();
-    assert_eq!(names, [METADATA_MEMBER, "a.txt", "notes.md", "opaque.bin"]);
+    assert_eq!(names, [FLYLEAF_MEMBER, "a.txt", "notes.md", "opaque.bin"]);
 }
 
 #[test]
-fn repacking_a_payload_under_its_own_name_does_not_touch_the_metadata_member() {
+fn repacking_a_content_under_its_own_name_does_not_touch_the_flyleaf_member() {
     let src = source_with_history();
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(src.clone()))
-        .payload("a.txt", pipe(b"revised\n"))
+        .content("a.txt", pipe(b"revised\n"))
         .write(&mut out)
         .unwrap();
 
     // The same bytes, and stored rather than deflated: the member was copied
     // through rather than written again. Nothing in it changed, so nothing
     // about it should have.
-    let before = open(&src).unwrap().metadata_bytes().to_vec();
-    assert_eq!(open(out.bytes()).unwrap().metadata_bytes(), before);
+    let before = open(&src).unwrap().flyleaf_bytes().to_vec();
+    assert_eq!(open(out.bytes()).unwrap().flyleaf_bytes(), before);
     assert_eq!(
         members(out.bytes())[0].1,
         zip::CompressionMethod::Stored,
-        "the metadata member was re-emitted rather than copied"
+        "the flyleaf member was re-emitted rather than copied"
     );
 }
 
 #[test]
-fn repacking_under_a_new_name_moves_payload_file_with_it() {
+fn repacking_under_a_new_name_moves_content_file_with_it() {
     let src = source_with_extras();
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(src))
-        .payload("b.txt", pipe(b"revised\n"))
+        .content("b.txt", pipe(b"revised\n"))
         .write(&mut out)
         .unwrap();
 
     let mut c = open(out.bytes()).unwrap();
-    assert_eq!(c.payload_name(), "b.txt");
-    assert_eq!(payload_of(&mut c), b"revised\n");
+    assert_eq!(c.content_name(), "b.txt");
+    assert_eq!(content_of(&mut c), b"revised\n");
 
     // The old member is gone rather than left beside the new one, and the new
     // one sits where it sat.
     let names: Vec<String> = members(out.bytes()).into_iter().map(|(n, _)| n).collect();
-    assert_eq!(names, [METADATA_MEMBER, "b.txt", "notes.md", "opaque.bin"]);
+    assert_eq!(names, [FLYLEAF_MEMBER, "b.txt", "notes.md", "opaque.bin"]);
 }
 
 #[test]
@@ -527,90 +527,90 @@ fn repacking_keeps_the_comments_and_the_keys_it_does_not_know() {
     let src = source_with_history();
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(src))
-        .payload("b.txt", pipe(b"revised\n"))
+        .content("b.txt", pipe(b"revised\n"))
         .write(&mut out)
         .unwrap();
 
     let c = open(out.bytes()).unwrap();
-    let text = String::from_utf8(c.metadata_bytes().to_vec()).unwrap();
+    let text = String::from_utf8(c.flyleaf_bytes().to_vec()).unwrap();
     assert!(text.starts_with("# written by hand\n"), "{text}");
-    assert_eq!(c.metadata()["title"].as_str(), Some("the quarterly"));
-    assert_eq!(c.payload_name(), "b.txt");
+    assert_eq!(c.flyleaf()["title"].as_str(), Some("the quarterly"));
+    assert_eq!(c.content_name(), "b.txt");
 }
 
 #[test]
-fn repointing_payload_file_keeps_the_comment_beside_it() {
+fn repointing_content_file_keeps_the_comment_beside_it() {
     // The key the library edits itself is the one key SPEC 3's guarantee is
     // easiest to lose: everything else survives because nothing touches it.
     let src = raw_zip(&[
         Member::new(
-            METADATA_MEMBER,
-            b"slipcase_version = \"1.0\"\n\n[payload]\nfile = \"a.txt\"  # SPEC 2.2\n",
+            FLYLEAF_MEMBER,
+            b"slipcase_version = \"1.1\"\n\n[content]\nfile = \"a.txt\"  # SPEC 2.2\n",
         ),
-        Member::new("a.txt", b"payload\n"),
+        Member::new("a.txt", b"content\n"),
     ]);
 
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(src))
-        .payload("b.txt", pipe(b"revised\n"))
+        .content("b.txt", pipe(b"revised\n"))
         .write(&mut out)
         .unwrap();
 
     let c = open(out.bytes()).unwrap();
-    assert_eq!(c.payload_name(), "b.txt");
+    assert_eq!(c.content_name(), "b.txt");
     assert_eq!(
-        String::from_utf8(c.metadata_bytes().to_vec()).unwrap(),
-        "slipcase_version = \"1.0\"\n\n[payload]\nfile = \"b.txt\"  # SPEC 2.2\n"
+        String::from_utf8(c.flyleaf_bytes().to_vec()).unwrap(),
+        "slipcase_version = \"1.1\"\n\n[content]\nfile = \"b.txt\"  # SPEC 2.2\n"
     );
 }
 
 #[test]
-fn repointing_payload_file_keeps_the_whitespace_of_a_multiline_inline_table() {
+fn repointing_content_file_keeps_the_whitespace_of_a_multiline_inline_table() {
     // A value written inside a multi-line inline table carries the space before
     // its trailing comma as decor. Replacing the value rather than the item is
     // what keeps the table looking the way it was written.
-    let written = "slipcase_version = \"1.0\"\npayload = {\n    file = \"a.txt\" ,\n}\n";
+    let written = "slipcase_version = \"1.1\"\ncontent = {\n    file = \"a.txt\" ,\n}\n";
     let src = raw_zip(&[
-        Member::new(METADATA_MEMBER, written.as_bytes()),
-        Member::new("a.txt", b"payload\n"),
+        Member::new(FLYLEAF_MEMBER, written.as_bytes()),
+        Member::new("a.txt", b"content\n"),
     ]);
 
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(src))
-        .payload("b.txt", pipe(b"revised\n"))
+        .content("b.txt", pipe(b"revised\n"))
         .write(&mut out)
         .unwrap();
 
     let c = open(out.bytes()).unwrap();
     assert_eq!(
-        String::from_utf8(c.metadata_bytes().to_vec()).unwrap(),
+        String::from_utf8(c.flyleaf_bytes().to_vec()).unwrap(),
         written.replace("a.txt", "b.txt")
     );
 }
 
 #[test]
 fn repacking_under_the_name_the_document_already_carries_rewrites_nothing() {
-    // Handing over a document and replacing the payload under the name it
+    // Handing over a document and replacing the content file under the name it
     // already had are two things a caller does in one write. The name did not
-    // change, so `payload.file` should not be written at all.
-    let written = "slipcase_version = \"1.0\"\n\n[payload]\nfile = \"a.txt\"  # SPEC 2.2\n";
+    // change, so `content.file` should not be written at all.
+    let written = "slipcase_version = \"1.1\"\n\n[content]\nfile = \"a.txt\"  # SPEC 2.2\n";
     let src = raw_zip(&[
-        Member::new(METADATA_MEMBER, written.as_bytes()),
-        Member::new("a.txt", b"payload\n"),
+        Member::new(FLYLEAF_MEMBER, written.as_bytes()),
+        Member::new("a.txt", b"content\n"),
     ]);
     let given = doc(written);
 
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(src))
-        .metadata(&given)
-        .payload("a.txt", pipe(b"revised\n"))
+        .flyleaf(&given)
+        .content("a.txt", pipe(b"revised\n"))
         .write(&mut out)
         .unwrap();
 
     let mut c = open(out.bytes()).unwrap();
-    assert_eq!(payload_of(&mut c), b"revised\n");
+    assert_eq!(content_of(&mut c), b"revised\n");
     assert_eq!(
-        String::from_utf8(c.metadata_bytes().to_vec()).unwrap(),
+        String::from_utf8(c.flyleaf_bytes().to_vec()).unwrap(),
         written
     );
 }
@@ -619,31 +619,31 @@ fn repacking_under_the_name_the_document_already_carries_rewrites_nothing() {
 fn repacking_refuses_a_name_another_member_already_carries() {
     let src = source_with_extras();
     let e = slpc::Repack::new(std::io::Cursor::new(src))
-        .payload("notes.md", pipe(b"revised\n"))
+        .content("notes.md", pipe(b"revised\n"))
         .write(Seekable::default())
         .unwrap_err();
     match e {
-        Error::Malformed(Malformed::PayloadNameTaken(n)) => assert_eq!(n, "notes.md"),
-        other => panic!("expected PayloadNameTaken, got {other:?}"),
+        Error::Malformed(Malformed::ContentNameTaken(n)) => assert_eq!(n, "notes.md"),
+        other => panic!("expected ContentNameTaken, got {other:?}"),
     }
 }
 
 #[test]
-fn repacking_refuses_a_payload_name_that_is_not_a_plain_filename() {
-    for name in ["", ".", "..", "a/b", "a\\b", "C:x", METADATA_MEMBER] {
+fn repacking_refuses_a_content_name_that_is_not_a_plain_filename() {
+    for name in ["", ".", "..", "a/b", "a\\b", "C:x", FLYLEAF_MEMBER] {
         let e = slpc::Repack::new(std::io::Cursor::new(source_with_extras()))
-            .payload(name, pipe(b"x"))
+            .content(name, pipe(b"x"))
             .write(Seekable::default())
             .unwrap_err();
         assert!(
-            matches!(e, Error::Malformed(Malformed::PayloadName(_))),
+            matches!(e, Error::Malformed(Malformed::ContentName(_))),
             "{name:?}: {e:?}"
         );
     }
 }
 
 #[test]
-fn repacking_takes_a_payload_name_from_a_path() {
+fn repacking_takes_a_content_name_from_a_path() {
     let dir = std::env::temp_dir().join(format!("slpc-repack-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("b.txt");
@@ -651,44 +651,44 @@ fn repacking_takes_a_payload_name_from_a_path() {
 
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(source_with_extras()))
-        .payload_file(&path)
+        .content_file(&path)
         .unwrap()
         .write(&mut out)
         .unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 
     let mut c = open(out.bytes()).unwrap();
-    assert_eq!(c.payload_name(), "b.txt");
-    assert_eq!(payload_of(&mut c), b"from a file\n");
+    assert_eq!(c.content_name(), "b.txt");
+    assert_eq!(content_of(&mut c), b"from a file\n");
 }
 
 #[test]
-fn repacking_sets_payload_file_in_a_document_and_refuses_bytes_that_disagree() {
+fn repacking_sets_content_file_in_a_document_and_refuses_bytes_that_disagree() {
     let src = source_with_extras();
 
     // A document is edited, because the value it carried named the member being
     // replaced and cannot have meant anything else.
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(src.clone()))
-        .metadata(&doc(
-            "slipcase_version = \"1.0\"\n\n[payload]\nfile = \"a.txt\"\n",
+        .flyleaf(&doc(
+            "slipcase_version = \"1.1\"\n\n[content]\nfile = \"a.txt\"\n",
         ))
-        .payload("b.txt", pipe(b"revised\n"))
+        .content("b.txt", pipe(b"revised\n"))
         .write(&mut out)
         .unwrap();
-    assert_eq!(open(out.bytes()).unwrap().payload_name(), "b.txt");
+    assert_eq!(open(out.bytes()).unwrap().content_name(), "b.txt");
 
     // Bytes are stored as handed in, so they are refused rather than corrected.
     let e = slpc::Repack::new(std::io::Cursor::new(src))
-        .metadata_bytes(metadata("a.txt").as_bytes())
-        .payload("b.txt", pipe(b"revised\n"))
+        .flyleaf_bytes(flyleaf("a.txt").as_bytes())
+        .content("b.txt", pipe(b"revised\n"))
         .write(Seekable::default())
         .unwrap_err();
     assert!(
         matches!(
             e,
             Error::Malformed(Malformed::Disagrees {
-                key: "payload.file",
+                key: "content.file",
                 ..
             })
         ),
@@ -699,20 +699,20 @@ fn repacking_sets_payload_file_in_a_document_and_refuses_bytes_that_disagree() {
 #[test]
 fn repacking_changes_both_halves_at_once() {
     let src = source_with_extras();
-    let new = "slipcase_version = \"1.0\"\ntitle = \"revised\"\n\n[payload]\nfile = \"b.txt\"\n";
+    let new = "slipcase_version = \"1.1\"\ntitle = \"revised\"\n\n[content]\nfile = \"b.txt\"\n";
 
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(src))
-        .metadata_bytes(new.as_bytes())
-        .payload("b.txt", pipe(b"revised\n"))
+        .flyleaf_bytes(new.as_bytes())
+        .content("b.txt", pipe(b"revised\n"))
         .write(&mut out)
         .unwrap();
 
     let mut c = open(out.bytes()).unwrap();
-    assert_eq!(c.metadata()["title"].as_str(), Some("revised"));
-    assert_eq!(payload_of(&mut c), b"revised\n");
+    assert_eq!(c.flyleaf()["title"].as_str(), Some("revised"));
+    assert_eq!(content_of(&mut c), b"revised\n");
     let names: Vec<String> = members(out.bytes()).into_iter().map(|(n, _)| n).collect();
-    assert_eq!(names, [METADATA_MEMBER, "b.txt", "notes.md", "opaque.bin"]);
+    assert_eq!(names, [FLYLEAF_MEMBER, "b.txt", "notes.md", "opaque.bin"]);
 }
 
 #[test]
@@ -724,8 +724,8 @@ fn repacking_nothing_copies_the_container_through() {
         .unwrap();
 
     assert_eq!(
-        open(out.bytes()).unwrap().metadata_bytes(),
-        open(&src).unwrap().metadata_bytes()
+        open(out.bytes()).unwrap().flyleaf_bytes(),
+        open(&src).unwrap().flyleaf_bytes()
     );
     // Every member under the name and the compression method it arrived with:
     // nothing was decompressed in order to be written again.
@@ -736,7 +736,7 @@ fn repacking_nothing_copies_the_container_through() {
 fn repacking_copies_a_member_it_cannot_decompress() {
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(source_with_extras()))
-        .payload("a.txt", pipe(b"revised\n"))
+        .content("a.txt", pipe(b"revised\n"))
         .write(&mut out)
         .unwrap();
 
@@ -751,13 +751,13 @@ fn repacking_copies_a_member_it_cannot_decompress() {
 fn repacking_refuses_a_source_whose_version_it_does_not_recognise() {
     let src = raw_zip(&[
         Member::new(
-            METADATA_MEMBER,
-            b"slipcase_version = \"9.4\"\n\n[payload]\nfile = \"a.txt\"\n",
+            FLYLEAF_MEMBER,
+            b"slipcase_version = \"9.4\"\n\n[content]\nfile = \"a.txt\"\n",
         ),
         Member::new("a.txt", b"x"),
     ]);
     let e = slpc::Repack::new(std::io::Cursor::new(src))
-        .payload("a.txt", pipe(b"revised\n"))
+        .content("a.txt", pipe(b"revised\n"))
         .write(Seekable::default())
         .unwrap_err();
     match e {
@@ -770,7 +770,7 @@ fn repacking_refuses_a_source_whose_version_it_does_not_recognise() {
 fn what_it_repacks_it_validates() {
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(source_with_history()))
-        .payload("b.txt", pipe(b"revised\n"))
+        .content("b.txt", pipe(b"revised\n"))
         .write(&mut out)
         .unwrap();
 
@@ -779,15 +779,15 @@ fn what_it_repacks_it_validates() {
 }
 
 #[test]
-fn repacking_streams_a_payload_of_unknown_length_into_a_writer_that_cannot_seek() {
+fn repacking_streams_a_content_of_unknown_length_into_a_writer_that_cannot_seek() {
     let big = vec![b'x'; 200_000];
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(source_with_extras()))
-        .payload("a.txt", pipe(&big))
+        .content("a.txt", pipe(&big))
         .write(&mut out)
         .unwrap();
 
-    assert_eq!(payload_of(&mut open(out.bytes()).unwrap()), big);
+    assert_eq!(content_of(&mut open(out.bytes()).unwrap()), big);
 }
 
 #[test]
@@ -806,7 +806,7 @@ fn repacking_leaves_no_member_promising_a_data_descriptor() {
     // filled in afterwards and no descriptor is promised at all.
     let mut out = Seekable::default();
     slpc::Repack::new(std::io::Cursor::new(source_with_extras()))
-        .payload("a.txt", pipe(b"revised\n"))
+        .content("a.txt", pipe(b"revised\n"))
         .write(&mut out)
         .unwrap();
 

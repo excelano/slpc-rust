@@ -19,7 +19,7 @@
 //! it has earned.** It cannot see a wrong answer, only a crash or a hang; a
 //! container that validates as conformant when it should not is the
 //! conformance corpus's job and the two are complements. And it does not reach
-//! the metadata bound's real guarantee — the cap on the bytes as they arrive
+//! the flyleaf bound's real guarantee — the cap on the bytes as they arrive
 //! rather than the cheap refusal on the size the directory declares. Mutations
 //! grow an input by a few times, not by the two orders of magnitude between the
 //! largest corpus seed and a 1 MiB bound, and the run prints its largest input
@@ -173,7 +173,7 @@ fn mutate(seed: &[u8], rng: &mut Rng) -> Vec<u8> {
             // Grow it. Every other arm keeps the length or shortens it, so
             // until 2026-08-27 no mutation could make an input longer than its
             // seed — the longest this harness had ever generated was 4,437
-            // bytes against a 1 MiB metadata bound, which meant the bound's
+            // bytes against a 1 MiB flyleaf bound, which meant the bound's
             // real guarantee, the cap on the bytes as they arrive, was never
             // once exercised in 32 million cases. Duplicating a run is the
             // cheapest way to reach a size no seed carries.
@@ -203,8 +203,8 @@ fn mutate(seed: &[u8], rng: &mut Rng) -> Vec<u8> {
 /// **A fuzzer that never gets past the front door finds nothing, and looks
 /// exactly like one that found nothing.** Most mutations of a ZIP archive stop
 /// at "not an archive", which exercises about four lines. These counters are
-/// what says whether the run reached the metadata parser, the name rules, and
-/// the payload — and they are printed at the end for that reason rather than
+/// what says whether the run reached the flyleaf parser, the name rules, and
+/// the content file — and they are printed at the end for that reason rather than
 /// for interest.
 #[derive(Default)]
 struct Reach {
@@ -213,12 +213,12 @@ struct Reach {
     undetermined: u64,
     out_of_scope: u64,
     conformant: u64,
-    metadata_parsed: u64,
-    payload_read: u64,
+    flyleaf_parsed: u64,
+    content_read: u64,
     repacked: u64,
     /// The largest input generated, against the largest seed.
     ///
-    /// The bound SPEC 6 requires is on the metadata member's decompressed size,
+    /// The bound SPEC 6 requires is on the flyleaf member's decompressed size,
     /// and its real guarantee is the cap on the bytes as they arrive rather
     /// than the cheap refusal on the size the directory declares. Reaching that
     /// needs an input bigger than any seed, so whether one was ever built is a
@@ -228,8 +228,8 @@ struct Reach {
 
 /// Everything a caller can ask of a byte stream, asked of one.
 ///
-/// The payload is read too, and to a bounded sink: a conformant container may
-/// legitimately hold a large payload and the point here is a defect in this
+/// The content file is read too, and to a bounded sink: a conformant container may
+/// legitimately hold a large content file and the point here is a defect in this
 /// crate, not how fast this machine can copy.
 fn exercise(bytes: &[u8], reach: &mut Reach) {
     match slpc::validate(Cursor::new(bytes)) {
@@ -245,22 +245,22 @@ fn exercise(bytes: &[u8], reach: &mut Reach) {
         }
         _ => reach.other_refusal += 1,
     }
-    if slpc::metadata_of(Cursor::new(bytes)).is_ok() {
-        reach.metadata_parsed += 1;
+    if slpc::flyleaf_of(Cursor::new(bytes)).is_ok() {
+        reach.flyleaf_parsed += 1;
     }
     if let Ok(mut c) = slpc::Container::read(Cursor::new(bytes)) {
         let _ = c.version().len();
-        let _ = c.payload_name().len();
-        let _ = c.payload_size();
-        let _ = c.payload_mode();
-        let _ = c.check_payload_readable();
-        if let Ok(p) = c.payload() {
-            // Bounded on the read, so a decompression bomb in a *payload* is
-            // not mistaken for a hang in the reader. SPEC 6 bounds the metadata
+        let _ = c.content_name().len();
+        let _ = c.content_size();
+        let _ = c.content_mode();
+        let _ = c.check_content_readable();
+        if let Ok(p) = c.content() {
+            // Bounded on the read, so a decompression bomb in a *content file* is
+            // not mistaken for a hang in the reader. SPEC 6 bounds the flyleaf
             // member and deliberately does not bound this one: nothing inflates
-            // a payload until a caller asks, and this caller is asking.
+            // a content file until a caller asks, and this caller is asking.
             if std::io::copy(&mut p.take(4 << 20), &mut std::io::sink()).is_ok() {
-                reach.payload_read += 1;
+                reach.content_read += 1;
             }
         }
     }
@@ -374,8 +374,8 @@ fn main() -> std::process::ExitCode {
         reach.undetermined += this.undetermined;
         reach.out_of_scope += this.out_of_scope;
         reach.conformant += this.conformant;
-        reach.metadata_parsed += this.metadata_parsed;
-        reach.payload_read += this.payload_read;
+        reach.flyleaf_parsed += this.flyleaf_parsed;
+        reach.content_read += this.content_read;
         reach.repacked += this.repacked;
 
         if outcome.is_err() {
@@ -417,8 +417,8 @@ fn main() -> std::process::ExitCode {
         reach.not_an_archive, reach.other_refusal, reach.undetermined, reach.out_of_scope, reach.conformant
     );
     println!(
-        "           {} parsed the metadata, {} read a payload, {} rewrote and read back",
-        reach.metadata_parsed, reach.payload_read, reach.repacked
+        "           {} parsed the flyleaf, {} read a content file, {} rewrote and read back",
+        reach.flyleaf_parsed, reach.content_read, reach.repacked
     );
     let biggest_seed = seeds.iter().map(|(_, b)| b.len()).max().unwrap_or(0);
     println!(

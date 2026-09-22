@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-/// Why `payload.file` is not a name a payload may have.
+/// Why `content.file` is not a name a content file may have.
 ///
 /// Every variant is one bullet of SPEC 2.3. They are separate so a message can
 /// say which rule was broken rather than restating the whole list.
@@ -22,8 +22,8 @@ pub enum NameError {
     Colon,
     /// The name contains a character in U+0000 to U+001F, or U+007F.
     ControlCharacter(char),
-    /// The name is the metadata member's.
-    ReservedForMetadata,
+    /// The name is the flyleaf member's.
+    ReservedForFlyleaf,
     /// The name is not UTF-8, so no TOML string can hold it.
     NotUtf8,
 }
@@ -31,13 +31,13 @@ pub enum NameError {
 impl fmt::Display for NameError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Empty => f.write_str("payload.file is empty (SPEC 2.3)"),
-            Self::Relative => f.write_str("payload.file is `.` or `..` (SPEC 2.3)"),
-            Self::Separator(c) => write!(f, "payload.file contains {c:?}, so it is a path rather than a filename (SPEC 2.3)"),
-            Self::Colon => f.write_str("payload.file contains ':', which is read as rooting a path on some platforms (SPEC 2.3)"),
-            Self::ControlCharacter(c) => write!(f, "payload.file contains U+{:04X}, a control character (SPEC 2.3)", *c as u32),
-            Self::ReservedForMetadata => write!(f, "payload.file is {:?}, which names the metadata member (SPEC 2.3)", crate::METADATA_MEMBER),
-            Self::NotUtf8 => f.write_str("the name is not UTF-8, and payload.file is a TOML string (SPEC 2.2)"),
+            Self::Empty => f.write_str("content.file is empty (SPEC 2.3)"),
+            Self::Relative => f.write_str("content.file is `.` or `..` (SPEC 2.3)"),
+            Self::Separator(c) => write!(f, "content.file contains {c:?}, so it is a path rather than a filename (SPEC 2.3)"),
+            Self::Colon => f.write_str("content.file contains ':', which is read as rooting a path on some platforms (SPEC 2.3)"),
+            Self::ControlCharacter(c) => write!(f, "content.file contains U+{:04X}, a control character (SPEC 2.3)", *c as u32),
+            Self::ReservedForFlyleaf => write!(f, "content.file is {:?}, which names the flyleaf member (SPEC 2.3)", crate::FLYLEAF_MEMBER),
+            Self::NotUtf8 => f.write_str("the name is not UTF-8, and content.file is a TOML string (SPEC 2.2)"),
         }
     }
 }
@@ -56,63 +56,63 @@ impl fmt::Display for NameError {
 pub enum Malformed {
     /// Not a ZIP archive, or one whose central directory will not parse.
     NotAnArchive(String),
-    /// No member named `slipcase.metadata.toml` (SPEC 2.1).
-    NoMetadataMember,
-    /// The metadata member is not UTF-8 (SPEC 2.2).
-    MetadataNotUtf8,
-    /// The metadata member is not a valid TOML document (SPEC 2.2).
-    MetadataNotToml(String),
+    /// No member named `slipcase.flyleaf.toml` (SPEC 2.1).
+    NoFlyleafMember,
+    /// The flyleaf member is not UTF-8 (SPEC 2.2).
+    FlyleafNotUtf8,
+    /// The flyleaf member is not a valid TOML document (SPEC 2.2).
+    FlyleafNotToml(String),
     /// A required key is absent (SPEC 2.2).
     MissingKey(&'static str),
     /// A required key is present but is not a string (SPEC 2.2).
     KeyNotAString(&'static str),
-    /// `payload.file` is not a name a payload may have (SPEC 2.3).
-    PayloadName(NameError),
-    /// `payload.file` names no member of the archive (SPEC 2.1).
-    NoPayloadMember(String),
-    /// The payload member is not a regular file entry (SPEC 2.3).
+    /// `content.file` is not a name a content file may have (SPEC 2.3).
+    ContentName(NameError),
+    /// `content.file` names no member of the archive (SPEC 2.1).
+    NoContentMember(String),
+    /// The content member is not a regular file entry (SPEC 2.3).
     ///
     /// Directory entries, symbolic links, and every other entry type a ZIP
     /// implementation can record are excluded. An entry carrying no type
     /// information at all is taken to be a regular file, since there is nothing
     /// to say otherwise and ordinary archives are full of them.
-    PayloadNotARegularFile {
-        /// The member named by `payload.file`.
+    ContentNotARegularFile {
+        /// The member named by `content.file`.
         name: String,
         /// What the archive says the entry is.
         kind: EntryKind,
     },
-    /// More than one member is named `slipcase.metadata.toml` (SPEC 2.1).
-    DuplicateMetadataMember(usize),
-    /// More than one member's name equals `payload.file` (SPEC 2.1).
+    /// More than one member is named `slipcase.flyleaf.toml` (SPEC 2.1).
+    DuplicateFlyleafMember(usize),
+    /// More than one member's name equals `content.file` (SPEC 2.1).
     ///
-    /// Which one is the payload would depend on the order members sit in, and
+    /// Which one is the content file would depend on the order members sit in, and
     /// SPEC 3 forbids depending on that.
-    DuplicatePayloadMember {
+    DuplicateContentMember {
         /// The name they share.
         name: String,
         /// How many members carry it.
         count: usize,
     },
-    /// The archive already holds a member under the name a payload is being
+    /// The archive already holds a member under the name a content file is being
     /// written as (SPEC 2.1).
     ///
-    /// Reached only by repacking, where the payload arrives with a name and the
+    /// Reached only by repacking, where the content file arrives with a name and the
     /// container already has one. Writing it anyway would leave two members
-    /// carrying that name, and which of them was the payload would depend on
+    /// carrying that name, and which of them was the content file would depend on
     /// the order they sit in.
-    PayloadNameTaken(String),
-    /// A file on disk is called something `payload.file` cannot express (SPEC 2.3).
+    ContentNameTaken(String),
+    /// A file on disk is called something `content.file` cannot express (SPEC 2.3).
     ///
-    /// The payload is rejected rather than renamed. A container that cannot
-    /// name its own payload is worse than a refusal to write one.
-    PayloadPathName {
+    /// The content file is rejected rather than renamed. A container that cannot
+    /// name its own content file is worse than a refusal to write one.
+    ContentPathName {
         /// The path that was handed in.
         path: std::path::PathBuf,
         /// Which rule its filename breaks.
         cause: NameError,
     },
-    /// Metadata handed in contradicts what is being written (SPEC 2.2).
+    /// A flyleaf handed in contradicts what is being written (SPEC 2.2).
     ///
     /// The library sets both required keys itself, so a caller that also sets
     /// one has said two things. Which of them was meant is not recoverable, and
@@ -120,64 +120,64 @@ pub enum Malformed {
     Disagrees {
         /// The key both sides set.
         key: &'static str,
-        /// What the metadata handed in says.
+        /// What the flyleaf handed in says.
         found: String,
         /// What is actually being written.
         writing: String,
     },
-    /// `payload` is present in the metadata and is not a table (SPEC 2.2).
-    PayloadNotATable,
+    /// `content` is present in the flyleaf and is not a table (SPEC 2.2).
+    ContentNotATable,
 }
 
 impl fmt::Display for Malformed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotAnArchive(why) => write!(f, "not a readable ZIP archive: {why}"),
-            Self::NoMetadataMember => {
-                write!(f, "no member named {:?} (SPEC 2.1)", crate::METADATA_MEMBER)
+            Self::NoFlyleafMember => {
+                write!(f, "no member named {:?} (SPEC 2.1)", crate::FLYLEAF_MEMBER)
             }
-            Self::MetadataNotUtf8 => {
-                write!(f, "{:?} is not UTF-8 (SPEC 2.2)", crate::METADATA_MEMBER)
+            Self::FlyleafNotUtf8 => {
+                write!(f, "{:?} is not UTF-8 (SPEC 2.2)", crate::FLYLEAF_MEMBER)
             }
-            Self::MetadataNotToml(why) => write!(
+            Self::FlyleafNotToml(why) => write!(
                 f,
                 "{:?} is not a valid TOML document (SPEC 2.2): {why}",
-                crate::METADATA_MEMBER
+                crate::FLYLEAF_MEMBER
             ),
-            Self::MissingKey(k) => write!(f, "the metadata has no `{k}` key (SPEC 2.2)"),
-            Self::KeyNotAString(k) => write!(f, "the metadata's `{k}` is not a string (SPEC 2.2)"),
-            Self::PayloadName(e) => e.fmt(f),
-            Self::NoPayloadMember(n) => write!(
+            Self::MissingKey(k) => write!(f, "the flyleaf has no `{k}` key (SPEC 2.2)"),
+            Self::KeyNotAString(k) => write!(f, "the flyleaf's `{k}` is not a string (SPEC 2.2)"),
+            Self::ContentName(e) => e.fmt(f),
+            Self::NoContentMember(n) => write!(
                 f,
-                "payload.file names {n:?}, which the archive does not contain (SPEC 2.1)"
+                "content.file names {n:?}, which the archive does not contain (SPEC 2.1)"
             ),
-            Self::PayloadNotARegularFile { name, kind } => write!(
+            Self::ContentNotARegularFile { name, kind } => write!(
                 f,
-                "the payload member {name:?} is {kind} rather than a regular file entry (SPEC 2.3)"
+                "the content member {name:?} is {kind} rather than a regular file entry (SPEC 2.3)"
             ),
-            Self::DuplicateMetadataMember(n) => write!(
+            Self::DuplicateFlyleafMember(n) => write!(
                 f,
                 "{n} members are named {:?}; a container has exactly one (SPEC 2.1)",
-                crate::METADATA_MEMBER
+                crate::FLYLEAF_MEMBER
             ),
-            Self::DuplicatePayloadMember { name, count } => write!(
+            Self::DuplicateContentMember { name, count } => write!(
                 f,
-                "{count} members are named {name:?}; a container has exactly one payload (SPEC 2.1)"
+                "{count} members are named {name:?}; a container has exactly one content file (SPEC 2.1)"
             ),
-            Self::PayloadNameTaken(n) => write!(
+            Self::ContentNameTaken(n) => write!(
                 f,
-                "the container already has a member named {n:?}, so writing the payload under that name would leave it with two (SPEC 2.1)"
+                "the container already has a member named {n:?}, so writing the content file under that name would leave it with two (SPEC 2.1)"
             ),
-            Self::PayloadPathName { path, cause } => write!(
+            Self::ContentPathName { path, cause } => write!(
                 f,
                 "{} cannot be packed under its own name: {cause}",
                 path.display()
             ),
             Self::Disagrees { key, found, writing } => write!(
                 f,
-                "the metadata sets `{key}` to {found:?}, but this container is being written with {writing:?} (SPEC 2.2)"
+                "the flyleaf sets `{key}` to {found:?}, but this container is being written with {writing:?} (SPEC 2.2)"
             ),
-            Self::PayloadNotATable => f.write_str("the metadata's `payload` is not a table (SPEC 2.2)"),
+            Self::ContentNotATable => f.write_str("the flyleaf's `content` is not a table (SPEC 2.2)"),
         }
     }
 }
@@ -198,12 +198,12 @@ pub enum Unsupported {
     Encrypted,
     /// Something the ZIP crate declined to read and did not name further.
     Archive(String),
-    /// The metadata member is larger than this reader's bound (SPEC 6).
+    /// The flyleaf member is larger than this reader's bound (SPEC 6).
     ///
     /// Undetermined and never non-conformant: the bound belongs to the reader,
     /// so two readers holding different ones must not disagree about whether
     /// the same file conforms. Raise it with [`Limits`](crate::Limits).
-    MetadataTooLarge {
+    FlyleafTooLarge {
         /// The bound that was exceeded, in bytes.
         limit: u64,
         /// What the central directory recorded for the member.
@@ -230,13 +230,13 @@ impl fmt::Display for Unsupported {
             Self::Archive(why) => write!(f, "this build cannot read the archive: {why}"),
             // Two sentences for two situations, because a reader deciding
             // whether to raise the bound is helped by knowing which it met.
-            Self::MetadataTooLarge { limit, declared } if declared > limit => write!(
+            Self::FlyleafTooLarge { limit, declared } if declared > limit => write!(
                 f,
-                "the metadata member declares {declared} bytes, over this reader's limit of {limit} (SPEC 6)"
+                "the flyleaf member declares {declared} bytes, over this reader's limit of {limit} (SPEC 6)"
             ),
-            Self::MetadataTooLarge { limit, declared } => write!(
+            Self::FlyleafTooLarge { limit, declared } => write!(
                 f,
-                "the metadata member declares {declared} bytes and read past this reader's limit of {limit} (SPEC 6)"
+                "the flyleaf member declares {declared} bytes and read past this reader's limit of {limit} (SPEC 6)"
             ),
         }
     }
@@ -287,7 +287,7 @@ impl From<Malformed> for Error {
 
 impl From<NameError> for Error {
     fn from(e: NameError) -> Self {
-        Self::Malformed(Malformed::PayloadName(e))
+        Self::Malformed(Malformed::ContentName(e))
     }
 }
 

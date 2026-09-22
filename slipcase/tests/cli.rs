@@ -70,7 +70,7 @@ fn out(o: &Output) -> String {
 #[test]
 fn packs_and_unpacks_a_round_trip() {
     let s = Sandbox::new();
-    s.file("report.pdf", b"the payload\n");
+    s.file("report.pdf", b"the content\n");
 
     let o = s.run(&["pack", "report.pdf"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
@@ -81,7 +81,7 @@ fn packs_and_unpacks_a_round_trip() {
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert_eq!(
         std::fs::read(s.path().join("out/report.pdf")).unwrap(),
-        b"the payload\n"
+        b"the content\n"
     );
 }
 
@@ -91,22 +91,22 @@ fn pack_takes_extra_keys_from_a_meta_file() {
     s.file("a.txt", b"x");
     s.file("m.toml", b"title = \"Q3\"\n\n[custom]\nowner = \"ops\"\n");
 
-    assert_eq!(code(&s.run(&["pack", "a.txt", "--meta", "m.toml"])), 0);
+    assert_eq!(code(&s.run(&["pack", "a.txt", "--flyleaf", "m.toml"])), 0);
     let o = s.run(&["info", "a.txt.slpc"]);
     assert!(out(&o).contains("title = \"Q3\""), "{}", out(&o));
     assert!(out(&o).contains("owner = \"ops\""));
-    assert!(out(&o).contains("slipcase_version = \"1.0\""));
+    assert!(out(&o).contains("slipcase_version = \"1.1\""));
 }
 
 #[test]
-fn pack_refuses_a_meta_file_that_names_a_different_payload() {
+fn pack_refuses_a_meta_file_that_names_a_different_content() {
     let s = Sandbox::new();
     s.file("a.txt", b"x");
-    s.file("m.toml", b"[payload]\nfile = \"somethingelse.txt\"\n");
+    s.file("m.toml", b"[content]\nfile = \"somethingelse.txt\"\n");
 
-    let o = s.run(&["pack", "a.txt", "--meta", "m.toml"]);
+    let o = s.run(&["pack", "a.txt", "--flyleaf", "m.toml"]);
     assert_eq!(code(&o), 1);
-    assert!(err(&o).contains("payload.file"), "{}", err(&o));
+    assert!(err(&o).contains("content.file"), "{}", err(&o));
     // And nothing was left on disk, because the write goes through a rename.
     assert!(!s.path().join("a.txt.slpc").exists());
 }
@@ -134,7 +134,7 @@ fn pack_from_standard_input_with_a_name() {
 }
 
 #[test]
-fn pack_refuses_a_payload_name_that_is_not_a_plain_filename() {
+fn pack_refuses_a_content_name_that_is_not_a_plain_filename() {
     let s = Sandbox::new();
     s.file("a.txt", b"x");
     let o = s.run(&["pack", "a.txt", "--name", "../escape.txt", "-o", "out.slpc"]);
@@ -166,18 +166,18 @@ fn nothing_is_overwritten_without_force() {
 // --- unpack ----------------------------------------------------------------
 
 #[test]
-fn unpack_writes_the_metadata_only_when_asked() {
+fn unpack_writes_the_flyleaf_only_when_asked() {
     let s = Sandbox::new();
     s.file("a.txt", b"x");
     s.run(&["pack", "a.txt"]);
     std::fs::remove_file(s.path().join("a.txt")).unwrap();
 
     assert_eq!(code(&s.run(&["unpack", "a.txt.slpc"])), 0);
-    assert!(!s.path().join("slipcase.metadata.toml").exists());
+    assert!(!s.path().join("slipcase.flyleaf.toml").exists());
 
     std::fs::remove_file(s.path().join("a.txt")).unwrap();
-    assert_eq!(code(&s.run(&["unpack", "a.txt.slpc", "--metadata"])), 0);
-    assert!(s.path().join("slipcase.metadata.toml").exists());
+    assert_eq!(code(&s.run(&["unpack", "a.txt.slpc", "--flyleaf"])), 0);
+    assert!(s.path().join("slipcase.flyleaf.toml").exists());
 }
 
 #[test]
@@ -193,11 +193,11 @@ fn unpack_refuses_a_destination_that_is_not_there() {
 // --- info and validate -----------------------------------------------------
 
 #[test]
-fn info_prints_the_metadata_member_verbatim() {
+fn info_prints_the_flyleaf_member_verbatim() {
     let s = Sandbox::new();
     s.file("a.txt", b"x");
     s.file("m.toml", b"# a comment worth keeping\ntitle = \"kept\"\n");
-    s.run(&["pack", "a.txt", "--meta", "m.toml"]);
+    s.run(&["pack", "a.txt", "--flyleaf", "m.toml"]);
 
     let o = s.run(&["info", "a.txt.slpc"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
@@ -254,8 +254,8 @@ fn future_container() -> Vec<u8> {
     let opts =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    w.start_file("slipcase.metadata.toml", opts).unwrap();
-    w.write_all(b"slipcase_version = \"9.4\"\n\n[payload]\nfile = \"a.txt\"\n")
+    w.start_file("slipcase.flyleaf.toml", opts).unwrap();
+    w.write_all(b"slipcase_version = \"9.4\"\n\n[content]\nfile = \"a.txt\"\n")
         .unwrap();
     w.start_file("a.txt", opts).unwrap();
     w.write_all(b"from the future\n").unwrap();
@@ -332,16 +332,16 @@ fn version_and_help_have_both_spellings() {
 // --- repack ----------------------------------------------------------------
 
 /// A container the tool itself cannot write: one carrying a member and a
-/// metadata key that mean nothing to it, which is what SPEC 3 requires a
+/// flyleaf key that mean nothing to it, which is what SPEC 3 requires a
 /// rewrite to preserve.
 fn container_with_extras() -> Vec<u8> {
     use std::io::Write;
     let opts =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    w.start_file("slipcase.metadata.toml", opts).unwrap();
+    w.start_file("slipcase.flyleaf.toml", opts).unwrap();
     w.write_all(
-        b"# hand written\nslipcase_version = \"1.0\"\ntitle = \"the quarterly\"\n\n[payload]\nfile = \"a.txt\"\n",
+        b"# hand written\nslipcase_version = \"1.1\"\ntitle = \"the quarterly\"\n\n[content]\nfile = \"a.txt\"\n",
     )
     .unwrap();
     w.start_file("a.txt", opts).unwrap();
@@ -361,33 +361,33 @@ fn member_names(path: &Path) -> Vec<String> {
 }
 
 #[test]
-fn repack_changes_the_metadata_in_place() {
+fn repack_changes_the_flyleaf_in_place() {
     let s = Sandbox::new();
     s.file("c.slpc", &container_with_extras());
     s.file(
         "m.toml",
-        b"slipcase_version = \"1.0\"\ntitle = \"revised\"\n\n[payload]\nfile = \"a.txt\"\n",
+        b"slipcase_version = \"1.1\"\ntitle = \"revised\"\n\n[content]\nfile = \"a.txt\"\n",
     );
 
-    let o = s.run(&["repack", "--meta", "m.toml", "c.slpc"]);
+    let o = s.run(&["repack", "--flyleaf", "m.toml", "c.slpc"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert!(out(&s.run(&["info", "c.slpc"])).contains("revised"));
     assert_eq!(code(&s.run(&["validate", "c.slpc"])), 0);
 }
 
 #[test]
-fn repack_replaces_the_payload_and_moves_payload_file_with_it() {
+fn repack_replaces_the_content_and_moves_content_file_with_it() {
     let s = Sandbox::new();
     s.file("c.slpc", &container_with_extras());
     s.file("b.txt", b"second\n");
 
-    let o = s.run(&["repack", "--payload", "b.txt", "c.slpc"]);
+    let o = s.run(&["repack", "--content", "b.txt", "c.slpc"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
 
     // The old member is replaced rather than joined, and it keeps its place.
     assert_eq!(
         member_names(&s.path().join("c.slpc")),
-        ["slipcase.metadata.toml", "b.txt", "notes.md"]
+        ["slipcase.flyleaf.toml", "b.txt", "notes.md"]
     );
     assert!(out(&s.run(&["info", "c.slpc"])).contains("file = \"b.txt\""));
 
@@ -402,21 +402,21 @@ fn repack_replaces_the_payload_and_moves_payload_file_with_it() {
 #[test]
 fn repack_preserves_what_it_does_not_recognise() {
     // SPEC 3: members an implementation does not recognize survive a rewrite,
-    // and so do metadata keys. Nothing else in this suite can reach that
+    // and so do flyleaf keys. Nothing else in this suite can reach that
     // requirement, because nothing else changes a container that already
     // exists.
     let s = Sandbox::new();
     s.file("c.slpc", &container_with_extras());
     s.file("b.txt", b"second\n");
 
-    assert_eq!(code(&s.run(&["repack", "--payload", "b.txt", "c.slpc"])), 0);
+    assert_eq!(code(&s.run(&["repack", "--content", "b.txt", "c.slpc"])), 0);
 
     let names = member_names(&s.path().join("c.slpc"));
     assert!(names.contains(&"notes.md".to_owned()), "{names:?}");
 
-    let metadata = out(&s.run(&["info", "c.slpc"]));
-    assert!(metadata.contains("title = \"the quarterly\""), "{metadata}");
-    assert!(metadata.starts_with("# hand written\n"), "{metadata}");
+    let flyleaf = out(&s.run(&["info", "c.slpc"]));
+    assert!(flyleaf.contains("title = \"the quarterly\""), "{flyleaf}");
+    assert!(flyleaf.starts_with("# hand written\n"), "{flyleaf}");
 
     // And the member itself, byte for byte.
     let f = std::fs::File::open(s.path().join("c.slpc")).unwrap();
@@ -436,7 +436,7 @@ fn repack_leaves_the_container_alone_when_it_refuses() {
     // A name another member already carries, which SPEC 2.1 forbids.
     let o = s.run(&[
         "repack",
-        "--payload",
+        "--content",
         "b.txt",
         "--name",
         "notes.md",
@@ -466,10 +466,10 @@ fn repack_moves_a_container_through_a_pipeline() {
     let s = Sandbox::new();
     s.file("c.slpc", &container_with_extras());
 
-    // Metadata in on standard input, the container out on standard output.
+    // Flyleaf in on standard input, the container out on standard output.
     let o = s.pipe(
-        &["repack", "--meta", "-", "c.slpc", "-o", "-"],
-        b"slipcase_version = \"1.0\"\ntitle = \"piped\"\n\n[payload]\nfile = \"a.txt\"\n",
+        &["repack", "--flyleaf", "-", "c.slpc", "-o", "-"],
+        b"slipcase_version = \"1.1\"\ntitle = \"piped\"\n\n[content]\nfile = \"a.txt\"\n",
     );
     assert_eq!(code(&o), 0, "{}", err(&o));
 
@@ -485,10 +485,10 @@ fn repack_from_standard_input_needs_somewhere_to_write() {
     let s = Sandbox::new();
     s.file(
         "m.toml",
-        b"slipcase_version = \"1.0\"\n\n[payload]\nfile = \"a.txt\"\n",
+        b"slipcase_version = \"1.1\"\n\n[content]\nfile = \"a.txt\"\n",
     );
     let o = s.pipe(
-        &["repack", "--meta", "m.toml", "-"],
+        &["repack", "--flyleaf", "m.toml", "-"],
         &container_with_extras(),
     );
     assert_eq!(code(&o), 1, "{}", err(&o));
@@ -502,9 +502,9 @@ fn repack_will_not_read_standard_input_twice() {
     let o = s.pipe(
         &[
             "repack",
-            "--meta",
+            "--flyleaf",
             "-",
-            "--payload",
+            "--content",
             "-",
             "--name",
             "b.txt",
@@ -522,10 +522,10 @@ fn repack_of_a_version_this_build_cannot_speak_to_is_no_verdict() {
     s.file("future.slpc", &future_container());
     s.file(
         "m.toml",
-        b"slipcase_version = \"1.0\"\n\n[payload]\nfile = \"a.txt\"\n",
+        b"slipcase_version = \"1.1\"\n\n[content]\nfile = \"a.txt\"\n",
     );
 
-    let o = s.run(&["repack", "--meta", "m.toml", "future.slpc"]);
+    let o = s.run(&["repack", "--flyleaf", "m.toml", "future.slpc"]);
     assert_eq!(code(&o), 3, "{}", err(&o));
     assert!(err(&o).contains("9.4"), "{}", err(&o));
 }
@@ -539,7 +539,7 @@ fn repack_keeps_the_containers_permissions() {
     s.file("b.txt", b"second\n");
     std::fs::set_permissions(&c, std::fs::Permissions::from_mode(0o640)).unwrap();
 
-    assert_eq!(code(&s.run(&["repack", "--payload", "b.txt", "c.slpc"])), 0);
+    assert_eq!(code(&s.run(&["repack", "--content", "b.txt", "c.slpc"])), 0);
 
     let mode = std::fs::metadata(&c).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o640, "a rename must not narrow a container to 0600");
@@ -553,7 +553,7 @@ fn repack_through_a_symlink_changes_the_container_and_not_the_link() {
     s.file("b.txt", b"second\n");
     std::os::unix::fs::symlink("c.slpc", s.path().join("link.slpc")).unwrap();
 
-    let o = s.run(&["repack", "--payload", "b.txt", "link.slpc"]);
+    let o = s.run(&["repack", "--content", "b.txt", "link.slpc"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
 
     assert!(
@@ -588,12 +588,12 @@ fn what_it_writes_is_readable_by_whoever_the_umask_said() {
     );
 
     std::fs::remove_file(s.path().join("a.txt")).unwrap();
-    assert_eq!(code(&s.run(&["unpack", "a.txt.slpc", "--metadata"])), 0);
-    assert_eq!(mode(&s.path().join("a.txt")), want, "an unpacked payload");
+    assert_eq!(code(&s.run(&["unpack", "a.txt.slpc", "--flyleaf"])), 0);
+    assert_eq!(mode(&s.path().join("a.txt")), want, "an unpacked content file");
     assert_eq!(
-        mode(&s.path().join("slipcase.metadata.toml")),
+        mode(&s.path().join("slipcase.flyleaf.toml")),
         want,
-        "an unpacked metadata member"
+        "an unpacked flyleaf member"
     );
 
     // A repack takes the container's own permissions instead, since it is
@@ -605,7 +605,7 @@ fn what_it_writes_is_readable_by_whoever_the_umask_said() {
     .unwrap();
     s.file("b.txt", b"y");
     assert_eq!(
-        code(&s.run(&["repack", "--payload", "b.txt", "a.txt.slpc"])),
+        code(&s.run(&["repack", "--content", "b.txt", "a.txt.slpc"])),
         0
     );
     assert_eq!(
@@ -632,7 +632,7 @@ fn the_permission_probe_leaves_nothing_behind() {
 // --- provenance ------------------------------------------------------------
 
 /// The defect this catches is the one that shipped: `slipcase unpack` on a
-/// downloaded container writing a payload that says nothing about where it came
+/// downloaded container writing a content file that says nothing about where it came
 /// from, so that whatever opens it next sees a file this machine made and the
 /// warning the container would have raised never appears.
 ///
@@ -640,7 +640,7 @@ fn the_permission_probe_leaves_nothing_behind() {
 /// what was wrong — nothing called it. Remove the `carry` from `unpack` and
 /// this fails while every test in `slpc` still passes.
 #[test]
-fn unpack_carries_where_the_container_came_from_onto_the_payload() {
+fn unpack_carries_where_the_container_came_from_onto_the_content() {
     let s = Sandbox::new();
     s.file("a.txt", b"x");
     s.run(&["pack", "a.txt"]);
@@ -654,7 +654,7 @@ fn unpack_carries_where_the_container_came_from_onto_the_payload() {
     assert_eq!(code(&s.run(&["unpack", "a.txt.slpc"])), 0);
     assert!(
         slpc::provenance::arrived_from_elsewhere(&s.path().join("a.txt")),
-        "the unpacked payload does not say it arrived from anywhere, so \
+        "the unpacked content does not say it arrived from anywhere, so \
          unpacking a downloaded container laundered it"
     );
 }
@@ -693,13 +693,13 @@ fn unpack_from_standard_input_is_not_a_provenance_failure() {
 
 /// `validate` escapes a bidirectional override before printing the name.
 ///
-/// Catches the line going out raw. A payload called `report<U+202E>fdp.exe`
+/// Catches the line going out raw. A content file called `report<U+202E>fdp.exe`
 /// reads as `report.pdf` in every terminal that applies the override, and this
 /// line is what somebody reads to decide what a container holds. SPEC 3
 /// requires the escaping and SPEC 2.3 deliberately permits the name, so the
 /// container here is conformant and the output is the only thing that changes.
 #[test]
-fn validate_escapes_a_bidi_override_in_the_payload_name() {
+fn validate_escapes_a_bidi_override_in_the_content_name() {
     let s = Sandbox::new();
     let o = s.pipe(
         &[
@@ -730,7 +730,7 @@ fn validate_escapes_a_bidi_override_in_the_payload_name() {
 /// `info` redirected reproduces the member byte for byte.
 ///
 /// The other half of the split, and the one that would break quietly. `info`
-/// into a file or a pipe is how a caller gets the metadata out, so escaping
+/// into a file or a pipe is how a caller gets the flyleaf out, so escaping
 /// there would hand them a document the container does not contain. Only a
 /// terminal gets the escaped form, and this harness is a pipe.
 #[test]
@@ -761,55 +761,55 @@ fn info_redirected_is_the_member_and_not_a_rendering() {
     // parses back to the name that went in.
     let parsed: slpc::toml_edit::DocumentMut = doc.parse().unwrap();
     assert_eq!(
-        parsed["payload"]["file"].as_str().unwrap(),
+        parsed["content"]["file"].as_str().unwrap(),
         "report\u{202E}fdp.exe"
     );
 }
 
-/// A failed `--metadata` leaves the payload nowhere, not on disk and unmarked.
+/// A failed `--flyleaf` leaves the content file nowhere, not on disk and unmarked.
 ///
 /// **The defect this catches wrote a file while reporting that it had not.**
 /// Both destinations are reserved before either is written and the code took
 /// that for the guarantee; it is the check. `Destination::new` asks whether the
 /// path exists and a dangling symbolic link answers no, so the refusal arrives
-/// at the no-clobber rename — which used to be after the payload had been
+/// at the no-clobber rename — which used to be after the content file had been
 /// committed and before its provenance was carried. One planted link in a
-/// directory somebody unpacks into left them a payload the tool said it had not
+/// directory somebody unpacks into left them a content file the tool said it had not
 /// written, carrying nothing about where it came from.
 ///
 /// Swap the two commits back and this fails on the second assertion.
 #[test]
 #[cfg(unix)]
-fn a_refused_metadata_write_leaves_no_payload_behind() {
+fn a_refused_flyleaf_write_leaves_no_content_behind() {
     let s = Sandbox::new();
-    s.file("report.pdf", b"the payload\n");
+    s.file("report.pdf", b"the content\n");
     assert_eq!(code(&s.run(&["pack", "report.pdf"])), 0);
     std::fs::create_dir(s.path().join("dest")).unwrap();
     std::os::unix::fs::symlink(
         "/nonexistent/nowhere",
-        s.path().join("dest").join("slipcase.metadata.toml"),
+        s.path().join("dest").join("slipcase.flyleaf.toml"),
     )
     .unwrap();
 
-    let o = s.run(&["unpack", "report.pdf.slpc", "--dest", "dest", "--metadata"]);
+    let o = s.run(&["unpack", "report.pdf.slpc", "--dest", "dest", "--flyleaf"]);
     assert_ne!(code(&o), 0, "it reports failure: {}", out(&o));
     assert!(
         !s.path().join("dest").join("report.pdf").exists(),
-        "the payload was written by a command that said it failed"
+        "the content file was written by a command that said it failed"
     );
 }
 
-/// A failed payload write takes the metadata back out with it.
+/// A failed content file write takes the flyleaf back out with it.
 ///
 /// The mirror of the test above, and the case the reorder created. With the
-/// metadata committing first, a payload that cannot land leaves a file the
+/// flyleaf committing first, a content file that cannot land leaves a file the
 /// error never mentions — and the obvious retry then fails on a file the failed
 /// run wrote. Catches the cleanup being dropped.
 #[test]
 #[cfg(unix)]
-fn a_refused_payload_write_takes_the_metadata_with_it() {
+fn a_refused_content_write_takes_the_flyleaf_with_it() {
     let s = Sandbox::new();
-    s.file("report.pdf", b"the payload\n");
+    s.file("report.pdf", b"the content\n");
     assert_eq!(code(&s.run(&["pack", "report.pdf"])), 0);
     std::fs::create_dir(s.path().join("dest")).unwrap();
     std::os::unix::fs::symlink(
@@ -818,14 +818,14 @@ fn a_refused_payload_write_takes_the_metadata_with_it() {
     )
     .unwrap();
 
-    let o = s.run(&["unpack", "report.pdf.slpc", "--dest", "dest", "--metadata"]);
+    let o = s.run(&["unpack", "report.pdf.slpc", "--dest", "dest", "--flyleaf"]);
     assert_ne!(code(&o), 0, "it reports failure: {}", out(&o));
     assert!(
         !s.path()
             .join("dest")
-            .join("slipcase.metadata.toml")
+            .join("slipcase.flyleaf.toml")
             .exists(),
-        "the metadata was left behind by a command that said it failed"
+        "the flyleaf was left behind by a command that said it failed"
     );
 }
 
@@ -841,7 +841,7 @@ fn a_refused_payload_write_takes_the_metadata_with_it() {
 #[cfg(unix)]
 fn repack_to_standard_output_marks_no_file_called_dash() {
     let s = Sandbox::new();
-    s.file("report.pdf", b"the payload\n");
+    s.file("report.pdf", b"the content\n");
     assert_eq!(code(&s.run(&["pack", "report.pdf"])), 0);
     if !mark_as_downloaded(&s.path().join("report.pdf.slpc")) {
         eprintln!("skipped: this filesystem will not hold a mark");
@@ -851,9 +851,9 @@ fn repack_to_standard_output_marks_no_file_called_dash() {
 
     s.file(
         "m.toml",
-        b"slipcase_version = \"1.0\"\n\n[payload]\nfile = \"report.pdf\"\n\nt = \"x\"\n",
+        b"slipcase_version = \"1.1\"\n\n[content]\nfile = \"report.pdf\"\n\nt = \"x\"\n",
     );
-    let o = s.run(&["repack", "report.pdf.slpc", "--meta", "m.toml", "-o", "-"]);
+    let o = s.run(&["repack", "report.pdf.slpc", "--flyleaf", "m.toml", "-o", "-"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
 
     assert!(

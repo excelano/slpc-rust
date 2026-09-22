@@ -1,4 +1,4 @@
-// Member names: what `payload.file` may be.
+// Member names: what `content.file` may be.
 //
 // Deciding whether a member's name equals another is a different question and
 // lives in `central.rs`, with the flag that decodes it.
@@ -7,15 +7,15 @@
 // Built with AI assistance (Claude, Anthropic)
 
 use crate::error::NameError;
-use crate::METADATA_MEMBER;
+use crate::FLYLEAF_MEMBER;
 
 /// Check a name against SPEC 2.3.
 ///
 /// The specification requires rejecting a name that breaks these rules rather
 /// than sanitizing it, so this returns the rule broken and never a repaired
-/// name. A payload is one file and never a location in a tree, and a name that
+/// name. A content file is one file and never a location in a tree, and a name that
 /// cannot express a path cannot express a traversal.
-pub fn check_payload_name(name: &str) -> Result<(), NameError> {
+pub fn check_content_name(name: &str) -> Result<(), NameError> {
     if name.is_empty() {
         return Err(NameError::Empty);
     }
@@ -37,8 +37,8 @@ pub fn check_payload_name(name: &str) -> Result<(), NameError> {
     if let Some(c) = name.chars().find(|c| c.is_ascii() && c.is_control()) {
         return Err(NameError::ControlCharacter(c));
     }
-    if name == METADATA_MEMBER {
-        return Err(NameError::ReservedForMetadata);
+    if name == FLYLEAF_MEMBER {
+        return Err(NameError::ReservedForFlyleaf);
     }
     Ok(())
 }
@@ -46,7 +46,7 @@ pub fn check_payload_name(name: &str) -> Result<(), NameError> {
 /// A member name in a form safe to put in front of a person.
 ///
 /// SPEC 3 requires that the Unicode bidirectional formatting characters be
-/// rendered escaped rather than applied wherever `payload.file` or a member
+/// rendered escaped rather than applied wherever `content.file` or a member
 /// name is displayed. This is that rendering: each one comes back spelled out
 /// as `\u{202E}`, everything else is untouched, and a name carrying none is
 /// returned borrowed and unchanged.
@@ -57,7 +57,7 @@ pub fn check_payload_name(name: &str) -> Result<(), NameError> {
 /// a table of special cases. The container is conformant; the problem is the
 /// display, which is where this belongs.
 ///
-/// U+202E RIGHT-TO-LEFT OVERRIDE is the one worth naming. A payload called
+/// U+202E RIGHT-TO-LEFT OVERRIDE is the one worth naming. A content file called
 /// `report<U+202E>fdp.exe` reads as `report.pdf` wherever the override is
 /// applied, beside a button that will hand the file to whatever the system has
 /// registered for `.exe`.
@@ -77,7 +77,7 @@ pub fn check_payload_name(name: &str) -> Result<(), NameError> {
 /// names share is a worse rendering.
 ///
 /// The C0 controls and U+007F are not here: SPEC 2.3 excludes those from
-/// `payload.file` outright, so a conformant container has none to display.
+/// `content.file` outright, so a conformant container has none to display.
 ///
 /// ```
 /// assert_eq!(slpc::display_name("report.pdf"), "report.pdf");
@@ -190,7 +190,7 @@ mod tests {
     /// A name with nothing to escape is returned borrowed.
     ///
     /// Catches an implementation that allocates for every name it is shown.
-    /// This runs on every payload card and every line of CLI output, and almost
+    /// This runs on every content file card and every line of CLI output, and almost
     /// every name has nothing in it.
     #[test]
     fn an_ordinary_name_is_not_copied() {
@@ -206,7 +206,7 @@ mod tests {
 
     /// The escaped form does not read as the name it was hiding.
     ///
-    /// The point of the whole exercise, stated as an assertion: a payload
+    /// The point of the whole exercise, stated as an assertion: a content file
     /// called `report<U+202E>fdp.exe` reads as `report.pdf` wherever the
     /// override is applied, and what comes out of here must still end in
     /// `.exe` however it is rendered, because nothing left in it reorders
@@ -230,7 +230,7 @@ mod tests {
             "wide 名前.txt",
             "-",
         ] {
-            assert_eq!(check_payload_name(n), Ok(()), "{n:?}");
+            assert_eq!(check_content_name(n), Ok(()), "{n:?}");
         }
     }
 
@@ -240,7 +240,7 @@ mod tests {
         // appears. A name that cannot express a path cannot express a traversal,
         // so `a..b` needs no defending against.
         for n in ["a..b", "..leading", "trailing..", "...."] {
-            assert_eq!(check_payload_name(n), Ok(()), "{n:?}");
+            assert_eq!(check_content_name(n), Ok(()), "{n:?}");
         }
     }
 
@@ -249,27 +249,27 @@ mod tests {
         for c in (0u8..=0x1f).chain(std::iter::once(0x7f)) {
             let name = format!("rep{}ort.pdf", c as char);
             assert_eq!(
-                check_payload_name(&name),
+                check_content_name(&name),
                 Err(NameError::ControlCharacter(c as char)),
                 "U+{c:04X}"
             );
         }
         // A character that merely looks exotic is not a control character.
-        assert_eq!(check_payload_name("rep\u{200b}ort.pdf"), Ok(()));
+        assert_eq!(check_content_name("rep\u{200b}ort.pdf"), Ok(()));
     }
 
     #[test]
     fn rejects_each_rule_in_2_3() {
-        assert_eq!(check_payload_name(""), Err(NameError::Empty));
-        assert_eq!(check_payload_name("."), Err(NameError::Relative));
-        assert_eq!(check_payload_name(".."), Err(NameError::Relative));
-        assert_eq!(check_payload_name("a/b"), Err(NameError::Separator('/')));
-        assert_eq!(check_payload_name("../b"), Err(NameError::Separator('/')));
-        assert_eq!(check_payload_name("a\\b"), Err(NameError::Separator('\\')));
-        assert_eq!(check_payload_name("C:file"), Err(NameError::Colon));
+        assert_eq!(check_content_name(""), Err(NameError::Empty));
+        assert_eq!(check_content_name("."), Err(NameError::Relative));
+        assert_eq!(check_content_name(".."), Err(NameError::Relative));
+        assert_eq!(check_content_name("a/b"), Err(NameError::Separator('/')));
+        assert_eq!(check_content_name("../b"), Err(NameError::Separator('/')));
+        assert_eq!(check_content_name("a\\b"), Err(NameError::Separator('\\')));
+        assert_eq!(check_content_name("C:file"), Err(NameError::Colon));
         assert_eq!(
-            check_payload_name(METADATA_MEMBER),
-            Err(NameError::ReservedForMetadata)
+            check_content_name(FLYLEAF_MEMBER),
+            Err(NameError::ReservedForFlyleaf)
         );
     }
 }

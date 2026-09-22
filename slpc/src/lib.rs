@@ -14,8 +14,8 @@ mod container;
 #[cfg(feature = "fs")]
 mod dest;
 mod error;
+mod flyleaf;
 mod limits;
-mod metadata;
 mod name;
 #[cfg(feature = "provenance")]
 pub mod provenance;
@@ -28,30 +28,30 @@ mod write;
 /// from a dependency of their own is what stops the two from skewing.
 pub use toml_edit;
 
-pub use container::{metadata_of, metadata_of_with, Container};
+pub use container::{flyleaf_of, flyleaf_of_with, Container};
 #[cfg(feature = "fs")]
-pub use dest::{display_path, payload_path, Destination};
+pub use dest::{content_path, display_path, Destination};
 pub use error::{EntryKind, Error, Malformed, NameError, Result, Unsupported};
 pub use limits::Limits;
-pub use name::{check_payload_name, display_name};
-pub use write::{pack_file, pack_reader, rewrite_metadata, rewrite_metadata_bytes, Repack};
+pub use name::{check_content_name, display_name};
+pub use write::{pack_file, pack_reader, rewrite_flyleaf, rewrite_flyleaf_bytes, Repack};
 
-/// The archive member holding the metadata (SPEC 2.1).
-pub const METADATA_MEMBER: &str = "slipcase.metadata.toml";
+/// The archive member holding the flyleaf (SPEC 2.1).
+pub const FLYLEAF_MEMBER: &str = "slipcase.flyleaf.toml";
 
 /// The version of the specification this build implements.
-pub const VERSION: &str = "1.0";
+pub const VERSION: &str = "1.1";
 
-/// The metadata key naming the specification version (SPEC 2.2).
+/// The flyleaf key naming the specification version (SPEC 2.2).
 pub const VERSION_KEY: &str = "slipcase_version";
 
-/// The metadata key naming the payload member (SPEC 2.2).
-pub const PAYLOAD_FILE_KEY: &str = "payload.file";
+/// The flyleaf key naming the content member (SPEC 2.2).
+pub const CONTENT_FILE_KEY: &str = "content.file";
 
 /// What can be said about a container after reading it.
 ///
 /// Four answers rather than two. SPEC 2.2 and SPEC 3 require that a container
-/// whose metadata member cannot be read is reported as neither conformant nor
+/// whose flyleaf member cannot be read is reported as neither conformant nor
 /// non-conformant, and SPEC 2.4 puts a container declaring another version
 /// outside this document's conformance question rather than failing it. A
 /// yes-or-no return could say neither thing.
@@ -62,7 +62,7 @@ pub enum Verdict {
     Conformant,
     /// Not conformant, and this is the rule it breaks.
     NonConformant(Malformed),
-    /// The metadata member could not be read, so conformance cannot be
+    /// The flyleaf member could not be read, so conformance cannot be
     /// established from the file (SPEC 2.2). Not a failure, and not a pass.
     Undetermined(Unsupported),
     /// Declares a `slipcase_version` this build does not implement (SPEC 2.4).
@@ -97,10 +97,10 @@ impl std::fmt::Display for Verdict {
 
 /// Report what can be said about a byte stream as a container.
 ///
-/// Reads the central directory and the metadata member. It confirms that
-/// exactly one member matches `payload.file` and that the member is a regular
-/// file entry, and it never decompresses the payload, so a container whose
-/// payload uses a compression method this build lacks still validates.
+/// Reads the central directory and the flyleaf member. It confirms that
+/// exactly one member matches `content.file` and that the member is a regular
+/// file entry, and it never decompresses the content file, so a container whose
+/// content file uses a compression method this build lacks still validates.
 ///
 /// The `Err` this returns is always [`Error::Io`]: not being able to read the
 /// bytes at all is a fact about the reader rather than about the container.
@@ -112,7 +112,7 @@ pub fn validate<R: std::io::Read + std::io::Seek>(reader: R) -> Result<Verdict> 
 /// Report what can be said about a byte stream, under bounds of the caller's
 /// choosing.
 ///
-/// [`validate`] with [`Limits::default`]. A container whose metadata member
+/// [`validate`] with [`Limits::default`]. A container whose flyleaf member
 /// exceeds the bound is [`Verdict::Undetermined`] and never
 /// [`Verdict::NonConformant`], which is SPEC 6: the bound belongs to this
 /// reader, so answering non-conformant would publish one reader's configuration

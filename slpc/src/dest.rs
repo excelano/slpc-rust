@@ -19,7 +19,7 @@ use crate::error::Result;
 /// A file that appears under its real name only once it has been written.
 ///
 /// Requires the `fs` feature, which is off by default:
-/// `slpc = { version = "0.3", features = ["fs"] }`.
+/// `slpc = { version = "0.4", features = ["fs"] }`.
 ///
 /// Everything is written to a temporary file beside the destination and renamed
 /// into place at the end, so a write that fails partway leaves nothing behind
@@ -222,7 +222,7 @@ impl Destination {
 fn already_exists(path: &Path) -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::AlreadyExists,
-        // Through `display_path`, because since `payload_path` exists a caller
+        // Through `display_path`, because since `content_path` exists a caller
         // can hand this function the `\\?\` verbatim form, and this string is
         // read by a person deciding what to do about the file. Identical for
         // every path that never carried the prefix, which is all of them
@@ -259,16 +259,16 @@ fn new_file_mode(near: &Path) -> Result<Permissions> {
     Ok(mode?)
 }
 
-/// Where a payload named `name` belongs inside `dir`, spelled the way this
+/// Where a content file named `name` belongs inside `dir`, spelled the way this
 /// platform can address it.
 ///
 /// **Use this rather than `dir.join(name)`.**
-/// [`check_payload_name`](crate::check_payload_name) answers whether a name is
+/// [`check_content_name`](crate::check_content_name) answers whether a name is
 /// legal under SPEC 2.3, and a legal name is not always a file. Win32 resolves
 /// `CON`, `CON.txt`, `con`, `COM1`, `AUX`, `LPT1`, `PRN` and `NUL` to devices
 /// wherever the name appears, so `dir.join("CON")` is the console rather than a
 /// path in `dir`. It is not a traversal, and the check against SPEC 2.3 does not
-/// catch it — writing there can silently discard the payload, and reading it
+/// catch it — writing there can silently discard the content file, and reading it
 /// back can block forever.
 ///
 /// On Windows this answers in the `\\?\` verbatim form, which reaches the
@@ -285,7 +285,7 @@ fn new_file_mode(near: &Path) -> Result<Permissions> {
 ///
 /// Everywhere but Windows the directory is the directory and this joins and
 /// returns. The verbatim form is deliberately not produced on Unix, where
-/// `canonicalize` would also resolve symbolic links and so move where a payload
+/// `canonicalize` would also resolve symbolic links and so move where a content file
 /// lands to fix a problem that platform does not have.
 ///
 /// Opening the result is a separate question and still fails: the shell answers
@@ -297,7 +297,7 @@ fn new_file_mode(near: &Path) -> Result<Permissions> {
 ///
 /// On Windows, whatever `canonicalize` says about `dir`, so a directory that is
 /// not there is an error here rather than at the first write. Nowhere else.
-pub fn payload_path(dir: &Path, name: &str) -> Result<PathBuf> {
+pub fn content_path(dir: &Path, name: &str) -> Result<PathBuf> {
     // Naming the directory, because the bare `canonicalize` error does not.
     // `slipcase unpack --dest nowhere` reported *The system cannot find the
     // file specified. (os error 2)* and left the person to work out which file
@@ -315,10 +315,10 @@ pub fn payload_path(dir: &Path, name: &str) -> Result<PathBuf> {
 
 /// A path as it should be shown to a person.
 ///
-/// [`payload_path`] hands back the `\\?\` verbatim form on Windows, because
+/// [`content_path`] hands back the `\\?\` verbatim form on Windows, because
 /// that is what addresses a file whose name Windows would otherwise read as a
 /// device. The prefix is how a path is addressed and not part of its name, so
-/// printing it would tell somebody their payload went to a place spelled in a
+/// printing it would tell somebody their content file went to a place spelled in a
 /// way they have never seen and could not type. This crate introduced the
 /// prefix, so this crate owes a caller the way to take it off.
 ///

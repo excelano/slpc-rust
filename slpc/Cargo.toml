@@ -1,6 +1,6 @@
 [package]
 name = "slpc"
-description = "Read, write, and validate Slipcase containers: a ZIP holding a payload file and the TOML metadata that describes it"
+description = "Read, write, and validate Slipcase containers: a ZIP holding a content file and the TOML flyleaf that describes it"
 homepage = "https://slipcaseformat.org"
 readme = "README.md"
 
@@ -17,7 +17,7 @@ readme = "README.md"
 # third copy here to satisfy the packager would be undoing that on purpose. The
 # test needs the workspace, so it stays in the workspace.
 exclude = ["tests/provenance.rs"]
-keywords = ["slipcase", "container", "metadata", "zip", "toml"]
+keywords = ["slipcase", "container", "flyleaf", "zip", "toml"]
 categories = ["filesystem", "encoding"]
 version.workspace = true
 edition.workspace = true
@@ -43,7 +43,7 @@ rust-version.workspace = true
 # nothing, an alternate data stream being reached through `std::fs`.
 fs = ["dep:tempfile", "provenance"]
 # Carrying what the platform records about where a container came from onto the
-# payload taken out of it. Off by default, and separate from `fs` rather than
+# content file taken out of it. Off by default, and separate from `fs` rather than
 # part of it: a caller writing containers has no use for it, and a caller who
 # only ever unpacks containers they made does not need it either. It adds
 # `xattr` on Unix and nothing at all on Windows, where an alternate data stream

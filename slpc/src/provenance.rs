@@ -1,4 +1,4 @@
-//! Where a container came from, carried onto the payload taken out of it.
+//! Where a container came from, carried onto the content file taken out of it.
 //
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
@@ -6,19 +6,19 @@
 //! A container downloaded from the internet is marked as such by the platform
 //! that downloaded it: `com.apple.quarantine` on macOS, a `Zone.Identifier`
 //! stream on Windows. Both are consulted before a file is opened, and both are
-//! properties of the file rather than of its contents — so a payload written
+//! properties of the file rather than of its contents — so a content file written
 //! out of that container carries neither unless something puts them there.
 //!
 //! **Without it, unpacking is laundering.** Somebody downloads a container,
-//! takes the payload out, and it reaches its handler as something this machine
+//! takes the content file out, and it reaches its handler as something this machine
 //! created rather than as something that arrived from elsewhere; the warning
 //! the platform would have shown never appears. That is the shape of defect
 //! that made disk images and archives the delivery vehicle of choice, and it is
-//! why refusing a payload name with a separator is not the end of what
+//! why refusing a content name with a separator is not the end of what
 //! unpacking owes.
 //!
 //! **Except under the macOS App Sandbox, where the platform marks the copy
-//! first.** Measured 2026-08-25: a payload written by a sandboxed process came
+//! first.** Measured 2026-08-25: a content file written by a sandboxed process came
 //! out carrying `com.apple.quarantine` naming that process, from a container
 //! carrying none, and the write attempted here was then refused — replacing one
 //! quarantine value with another is how forgery would work. So the premise
@@ -29,7 +29,7 @@
 //! when the platform keeps a mark that gates opening, the source carries one,
 //! and the copy ends up carrying none. Everything else — no mark, no such mark
 //! on this platform, a note nothing enforces, a mark the platform put there
-//! itself — succeeds. So the rule for a caller about to hand a payload to the
+//! itself — succeeds. So the rule for a caller about to hand a content file to the
 //! system is the whole of the rule: an error means do not open it.
 //!
 //! That is a test of the copy rather than of the write's own success: a copy the
@@ -47,7 +47,7 @@ use std::path::Path;
 
 use crate::error::Result;
 
-/// What was carried from a container onto the payload taken out of it.
+/// What was carried from a container onto the content file taken out of it.
 ///
 /// `#[non_exhaustive]` for the reason every other public enum here carries it:
 /// what a platform records about a downloaded file is that platform's to
@@ -56,7 +56,7 @@ use crate::error::Result;
 #[non_exhaustive]
 pub enum Mark {
     /// The source said where it came from, and the copy now says the same. The
-    /// platform will consult it before opening the payload.
+    /// platform will consult it before opening the content file.
     Carried,
     /// The same, except that nothing on this platform consults it. Linux keeps
     /// provenance as a note rather than as a gate, so this is hygiene and not a
@@ -116,7 +116,7 @@ pub fn carry(from: &Path, to: &Path) -> Result<Mark> {
 ///
 /// For a caller that wants to *say* where a container came from rather than act
 /// on it. It reports and never gates: what the platform will do about a mark is
-/// the platform's business, and a person deciding whether to open a payload is
+/// the platform's business, and a person deciding whether to open a content file is
 /// better served by knowing where the container came from than by being stopped.
 ///
 /// **Not the same question as whether the file is gated**, and the two are one
@@ -208,7 +208,7 @@ mod platform {
     /// place, so the note outlives the save that costs the mark.
     ///
     /// Best effort in both directions, like the Linux notes: a filesystem that
-    /// will not hold the attribute is not a reason to refuse a payload, because
+    /// will not hold the attribute is not a reason to refuse a content file, because
     /// the copy is gated by the platform's own mark whatever happens here.
     pub fn note_origin(from: &Path, to: &Path) -> bool {
         let Ok(Some(value)) = xattr::get(from, QUARANTINE) else {
@@ -336,7 +336,7 @@ mod platform {
     /// or not at all; `std::fs::write` creates this stream and then writes into
     /// it, so a write that fails partway — a full disk being the realistic one
     /// — leaves a stream that exists and carries no `ZoneId`. [`super::carry`]
-    /// reads a true answer here as licence to hand the payload over, so a
+    /// reads a true answer here as licence to hand the content file over, so a
     /// stream the shell does not act on must not be one.
     ///
     /// Measured 2026-08-26 by running a script under `-ExecutionPolicy
@@ -351,7 +351,7 @@ mod platform {
     /// One measured case is deliberately not reproduced. A value that is not a
     /// number at all still gates — `junk3` was refused — and this reads it as
     /// no gate. Being wrong that way costs a refusal to unpack; being wrong the
-    /// other way hands over a payload nothing will stop for, which is the
+    /// other way hands over a content file nothing will stop for, which is the
     /// laundering this module exists to prevent.
     pub fn carries_a_mark(path: &Path) -> bool {
         let stream = std::fs::read(stream_of(path)).unwrap_or_default();
@@ -412,7 +412,7 @@ mod platform {
 
     // The `Result` is the shape the other platforms need, not this one: on
     // Linux nothing here can fail, because a note nothing reads is not worth
-    // refusing a payload over. Narrowing the signature would make the arms
+    // refusing a content file over. Narrowing the signature would make the arms
     // disagree and push the difference into every caller.
     #[allow(clippy::unnecessary_wraps)]
     pub fn carry(from: &Path, to: &Path) -> io::Result<Mark> {
@@ -420,7 +420,7 @@ mod platform {
         for name in ORIGIN {
             // Best effort in both directions. A filesystem that will not hold
             // a `user.` attribute is not an error here, because refusing to
-            // open a payload over a note nothing reads would be theatre.
+            // open a content file over a note nothing reads would be theatre.
             if let Ok(Some(value)) = xattr::get(from, name) {
                 if xattr::set(to, name, &value).is_ok() {
                     carried = true;
@@ -432,7 +432,7 @@ mod platform {
 
     /// Nothing, and unreachable besides. [`super::carry`] only reaches this
     /// where the platform's write failed, and `carry` above cannot fail on this
-    /// platform — a note nothing reads is not worth refusing a payload over, so
+    /// platform — a note nothing reads is not worth refusing a content file over, so
     /// every arm of it returns `Ok`. It exists so that the wrapper has one
     /// shape on every platform rather than a `cfg` in the middle of the rule.
     ///
@@ -497,9 +497,9 @@ mod tests {
     fn a_container_from_nowhere_marks_nothing() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let from = dir.path().join("plain.slpc");
-        let to = dir.path().join("payload.pdf");
+        let to = dir.path().join("content.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
 
         assert_eq!(carry(&from, &to).expect("carrying"), Mark::Silent);
         assert!(xattr::get(&to, "user.xdg.origin.url")
@@ -507,16 +507,16 @@ mod tests {
             .is_none());
     }
 
-    /// The defect this catches is the whole point of the module: a payload
+    /// The defect this catches is the whole point of the module: a content file
     /// extracted from a downloaded container arriving with no record of where
     /// the container came from.
     #[test]
-    fn a_downloaded_container_puts_its_origin_on_the_payload() {
+    fn a_downloaded_container_puts_its_origin_on_the_content() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let from = dir.path().join("downloaded.slpc");
-        let to = dir.path().join("payload.pdf");
+        let to = dir.path().join("content.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
         xattr::set(
             &from,
             "user.xdg.origin.url",
@@ -537,9 +537,9 @@ mod tests {
     fn the_referrer_is_carried_as_well_as_the_origin() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let from = dir.path().join("downloaded.slpc");
-        let to = dir.path().join("payload.pdf");
+        let to = dir.path().join("content.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
         xattr::set(
             &from,
             "user.xdg.origin.url",
@@ -566,9 +566,9 @@ mod tests {
     fn an_origin_already_on_the_copy_is_replaced() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let from = dir.path().join("downloaded.slpc");
-        let to = dir.path().join("payload.pdf");
+        let to = dir.path().join("content.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
         xattr::set(&from, "user.xdg.origin.url", b"https://example.invalid/new")
             .expect("marking the source");
         xattr::set(&to, "user.xdg.origin.url", b"https://example.invalid/stale")
@@ -628,7 +628,7 @@ mod macos_tests {
         let from = dir.path().join("downloaded.slpc");
         let to = dir.path().join("report.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
         xattr::set(&from, QUARANTINE, FROM_SAFARI).expect("marking the source");
         xattr::set(&to, QUARANTINE, FROM_US).expect("marking the copy");
         unwritable(&to);
@@ -642,7 +642,7 @@ mod macos_tests {
     /// The defect this catches is the fallback above swallowing a real one. A
     /// copy that carries no mark at all after the write was refused is exactly
     /// the laundering this module exists to prevent, and it must still be an
-    /// error — otherwise the payload is handed to its handler looking like
+    /// error — otherwise the content file is handed to its handler looking like
     /// something this machine made.
     #[test]
     fn a_copy_with_no_mark_at_all_is_still_a_failure() {
@@ -650,7 +650,7 @@ mod macos_tests {
         let from = dir.path().join("downloaded.slpc");
         let to = dir.path().join("report.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
         xattr::set(&from, QUARANTINE, FROM_SAFARI).expect("marking the source");
         unwritable(&to);
 
@@ -730,7 +730,7 @@ mod macos_tests {
         let from = dir.path().join("downloaded.slpc");
         let to = dir.path().join("report.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
         xattr::set(&from, QUARANTINE, FROM_SAFARI).expect("marking the source");
         xattr::set(&to, QUARANTINE, &our_own_mark()).expect("as the platform would");
         unwritable(&to);
@@ -755,22 +755,22 @@ mod macos_tests {
         let from = dir.path().join("plain.slpc");
         let to = dir.path().join("report.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
 
         assert_eq!(carry(&from, &to).expect("carrying"), Mark::Silent);
         assert!(xattr::get(&to, QUARANTINE).expect("reading").is_none());
     }
 
     /// The defect this catches is the whole point of the module on this
-    /// platform: a payload extracted from a downloaded container arriving with
+    /// platform: a content file extracted from a downloaded container arriving with
     /// no quarantine attribute, so that Gatekeeper is never consulted about it.
     #[test]
-    fn a_downloaded_container_puts_its_quarantine_on_the_payload() {
+    fn a_downloaded_container_puts_its_quarantine_on_the_content() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let from = dir.path().join("downloaded.slpc");
         let to = dir.path().join("report.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
         xattr::set(&from, QUARANTINE, FROM_SAFARI).expect("marking the source");
 
         assert_eq!(carry(&from, &to).expect("carrying"), Mark::Carried);
@@ -933,19 +933,19 @@ mod windows_tests {
         std::fs::set_permissions(path, mode).expect("putting it back");
     }
 
-    /// The defect this catches is a payload extracted from a downloaded
+    /// The defect this catches is a content file extracted from a downloaded
     /// container reaching its handler with nothing on it the shell would stop
     /// for. `carries_a_mark` asked whether the stream existed, and the residue
     /// of a write that failed partway is a stream that exists carrying no
     /// `ZoneId` — so `carry` called the copy already marked, returned success,
-    /// and the payload opened ungated.
+    /// and the content file opened ungated.
     #[test]
     fn a_stream_that_does_not_gate_is_not_an_excuse_for_a_failed_write() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let from = dir.path().join("downloaded.slpc");
         let to = dir.path().join("report.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
         mark(&from, FROM_THE_INTERNET);
         mark(&to, A_WRITE_THAT_FAILED_PARTWAY);
         unwritable(&to);
@@ -970,7 +970,7 @@ mod windows_tests {
         let from = dir.path().join("downloaded.slpc");
         let to = dir.path().join("report.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
         mark(&from, FROM_THE_INTERNET);
         mark(&to, b"[ZoneTransfer]\r\nZoneId=4\r\n");
         unwritable(&to);
@@ -987,13 +987,13 @@ mod windows_tests {
     /// 2026-08-26 by running a script under `-ExecutionPolicy RemoteSigned`,
     /// which resolves a zone through this stream: 0, 1 and 2 ran and 3 and 4
     /// were refused. A predicate that took any `ZoneId` at all for a gate would
-    /// hand over a payload nothing would stop and call it stopped for.
+    /// hand over a content file nothing would stop and call it stopped for.
     #[test]
     fn only_the_zones_the_shell_gates_count_as_a_mark() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         for (zone, gates) in [(0, false), (1, false), (2, false), (3, true), (4, true)] {
             let file = dir.path().join(format!("zone-{zone}.pdf"));
-            std::fs::write(&file, b"payload").expect("the payload");
+            std::fs::write(&file, b"content").expect("the content");
             mark(
                 &file,
                 format!("[ZoneTransfer]\r\nZoneId={zone}\r\n").as_bytes(),
@@ -1030,22 +1030,22 @@ mod windows_tests {
         let from = dir.path().join("plain.slpc");
         let to = dir.path().join("report.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
 
         assert_eq!(carry(&from, &to).expect("carrying"), Mark::Silent);
         assert!(zone_on(&to).is_none());
     }
 
     /// The defect this catches is the whole point of the module on this
-    /// platform: a payload extracted from a downloaded container arriving with
+    /// platform: a content file extracted from a downloaded container arriving with
     /// no zone stream, so that the shell never asks about it.
     #[test]
-    fn a_downloaded_container_puts_its_zone_on_the_payload() {
+    fn a_downloaded_container_puts_its_zone_on_the_content() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let from = dir.path().join("downloaded.slpc");
         let to = dir.path().join("report.pdf");
         std::fs::write(&from, b"container").expect("the container");
-        std::fs::write(&to, b"payload").expect("the payload");
+        std::fs::write(&to, b"content").expect("the content");
         mark(&from, FROM_THE_INTERNET);
 
         assert_eq!(carry(&from, &to).expect("carrying"), Mark::Carried);

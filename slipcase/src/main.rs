@@ -31,7 +31,7 @@ Exit codes:
   3  no verdict: the container may well be conformant and this build cannot say
 
 3 is separate from 1 because the specification forbids calling a container
-non-conformant when its metadata member cannot be read, or when it declares a
+non-conformant when its flyleaf member cannot be read, or when it declares a
 version this build does not implement. Both are answers, not failures.
 
 Wherever a file is read, `-` names standard input. Wherever one is written,
@@ -46,13 +46,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Verb {
-    /// Write a container holding a payload and its metadata.
+    /// Write a container holding a content file and its flyleaf.
     Pack(Pack),
-    /// Write a container's payload to disk.
+    /// Write a container's content file to disk.
     Unpack(Unpack),
-    /// Change a container's metadata or payload, keeping everything else.
+    /// Change a container's flyleaf or content file, keeping everything else.
     Repack(Repack),
-    /// Print a container's metadata.
+    /// Print a container's flyleaf.
     Info(Info),
     /// Report whether a container is conformant.
     Validate(Validate),
@@ -61,14 +61,14 @@ enum Verb {
 #[derive(Args)]
 struct Pack {
     /// The file to pack. `-` reads standard input, which needs --name.
-    payload: PathBuf,
-    /// The name to record in payload.file. Taken from the payload's own filename otherwise.
+    content: PathBuf,
+    /// The name to record in content.file. Taken from the content file's own filename otherwise.
     #[arg(long, value_name = "NAME")]
     name: Option<String>,
-    /// A TOML file whose keys go into the container's metadata.
+    /// A TOML file whose keys go into the container's flyleaf.
     #[arg(long, value_name = "FILE")]
-    meta: Option<PathBuf>,
-    /// Where to write. Defaults to the payload's name with .slpc appended.
+    flyleaf: Option<PathBuf>,
+    /// Where to write. Defaults to the content file's name with .slpc appended.
     #[arg(short, long, value_name = "FILE")]
     output: Option<PathBuf>,
     /// Overwrite an existing file.
@@ -76,21 +76,21 @@ struct Pack {
     force: bool,
 }
 
-/// At least one of `--meta` and `--payload`: a repack with nothing to change
+/// At least one of `--flyleaf` and `--content`: a repack with nothing to change
 /// would read as a command that did something.
 #[derive(Args)]
-#[command(group(clap::ArgGroup::new("change").args(["meta", "payload"]).required(true).multiple(true)))]
+#[command(group(clap::ArgGroup::new("change").args(["flyleaf", "content"]).required(true).multiple(true)))]
 struct Repack {
     /// The container to change. `-` reads standard input, which needs -o.
     container: PathBuf,
-    /// A TOML file to become the container's metadata. `-` reads standard input.
+    /// A TOML file to become the container's flyleaf. `-` reads standard input.
     #[arg(long, value_name = "FILE")]
-    meta: Option<PathBuf>,
-    /// A file to become the container's payload. `-` reads standard input, which needs --name.
+    flyleaf: Option<PathBuf>,
+    /// A file to become the container's content file. `-` reads standard input, which needs --name.
     #[arg(long, value_name = "FILE")]
-    payload: Option<PathBuf>,
-    /// The name to record in payload.file. Taken from the payload's own filename otherwise.
-    #[arg(long, value_name = "NAME", requires = "payload")]
+    content: Option<PathBuf>,
+    /// The name to record in content.file. Taken from the content file's own filename otherwise.
+    #[arg(long, value_name = "NAME", requires = "content")]
     name: Option<String>,
     /// Where to write. Rewrites the container in place otherwise.
     #[arg(short, long, value_name = "FILE")]
@@ -104,12 +104,12 @@ struct Repack {
 struct Unpack {
     /// The container to unpack.
     container: PathBuf,
-    /// Where to write the payload. Defaults to the current directory.
+    /// Where to write the content file. Defaults to the current directory.
     #[arg(long, value_name = "DIR")]
     dest: Option<PathBuf>,
-    /// Also write slipcase.metadata.toml.
+    /// Also write slipcase.flyleaf.toml.
     #[arg(long)]
-    metadata: bool,
+    flyleaf: bool,
     /// Overwrite an existing file.
     #[arg(long)]
     force: bool,
@@ -150,16 +150,16 @@ fn run(cli: Cli) -> Result<()> {
 }
 
 fn pack(a: Pack) -> Result<()> {
-    let from_stdin = input::is_dash(&a.payload);
+    let from_stdin = input::is_dash(&a.content);
     if from_stdin && a.name.is_none() {
         return Err(Failure::new(
-            "packing from standard input needs --name: there is no filename to record in payload.file.",
+            "packing from standard input needs --name: there is no filename to record in content.file.",
         ));
     }
 
-    let metadata = match &a.meta {
+    let flyleaf = match &a.flyleaf {
         None => DocumentMut::new(),
-        Some(p) => read_metadata(p)?,
+        Some(p) => read_flyleaf(p)?,
     };
 
     let out_path = match a.output {
@@ -168,40 +168,40 @@ fn pack(a: Pack) -> Result<()> {
     };
     let mut out = destination(&out_path, a.force)?;
 
-    // The library sets payload.file and slipcase_version itself, so a --meta
+    // The library sets content.file and slipcase_version itself, so a --flyleaf
     // file that sets either to something else is refused rather than quietly
     // overwritten. Nothing here has to check for that.
     match (from_stdin, a.name) {
         (true, Some(name)) => {
-            slpc::pack_reader(&name, std::io::stdin().lock(), metadata, out.writer())?;
+            slpc::pack_reader(&name, std::io::stdin().lock(), flyleaf, out.writer())?;
         }
         (false, Some(name)) => {
-            let f = std::fs::File::open(&a.payload)
-                .context(format!("cannot read {}", a.payload.display()))?;
-            slpc::pack_reader(&name, f, metadata, out.writer())?;
+            let f = std::fs::File::open(&a.content)
+                .context(format!("cannot read {}", a.content.display()))?;
+            slpc::pack_reader(&name, f, flyleaf, out.writer())?;
         }
-        (false, None) => slpc::pack_file(&a.payload, metadata, out.writer())?,
+        (false, None) => slpc::pack_file(&a.content, flyleaf, out.writer())?,
         (true, None) => unreachable!("checked above"),
     }
     out.commit()
 }
 
-/// The payload's name with `.slpc` appended, per the naming convention.
+/// The content file's name with `.slpc` appended, per the naming convention.
 ///
-/// A convention and nothing more: `payload.file` is the only authority on the
-/// payload's name, and nothing here reads a container's name to find out what
+/// A convention and nothing more: `content.file` is the only authority on the
+/// content file's name, and nothing here reads a container's name to find out what
 /// is inside it.
 fn default_output(a: &Pack) -> Result<PathBuf> {
     let stem = match &a.name {
         Some(n) => n.clone(),
         None => a
-            .payload
+            .content
             .file_name()
             .and_then(std::ffi::OsStr::to_str)
             .ok_or_else(|| {
                 Failure::new(format!(
                     "{} has no filename to build an output name from. Pass -o.",
-                    a.payload.display()
+                    a.content.display()
                 ))
             })?
             .to_owned(),
@@ -209,7 +209,7 @@ fn default_output(a: &Pack) -> Result<PathBuf> {
     Ok(PathBuf::from(format!("{stem}.slpc")))
 }
 
-fn read_metadata(path: &Path) -> Result<DocumentMut> {
+fn read_flyleaf(path: &Path) -> Result<DocumentMut> {
     let what = input::name_of(path);
     let text = if input::is_dash(path) {
         std::io::read_to_string(std::io::stdin().lock())
@@ -240,7 +240,7 @@ fn destination(path: &Path, force: bool) -> Result<Destination> {
 fn repack(a: &Repack) -> Result<()> {
     // Three arguments can name standard input and there is only one of it.
     let container_piped = input::is_dash(&a.container);
-    let sources = [Some(&a.container), a.meta.as_ref(), a.payload.as_ref()];
+    let sources = [Some(&a.container), a.flyleaf.as_ref(), a.content.as_ref()];
     if sources
         .into_iter()
         .flatten()
@@ -249,7 +249,7 @@ fn repack(a: &Repack) -> Result<()> {
         > 1
     {
         return Err(Failure::new(
-            "only one of the container, --meta, and --payload can read standard input.",
+            "only one of the container, --flyleaf, and --content can read standard input.",
         ));
     }
     if container_piped && a.output.is_none() {
@@ -257,9 +257,9 @@ fn repack(a: &Repack) -> Result<()> {
             "a container read from standard input has no file to write back over. Pass -o.",
         ));
     }
-    if a.payload.as_deref().is_some_and(input::is_dash) && a.name.is_none() {
+    if a.content.as_deref().is_some_and(input::is_dash) && a.name.is_none() {
         return Err(Failure::new(
-            "a payload read from standard input needs --name: there is no filename to record in payload.file.",
+            "a content read from standard input needs --name: there is no filename to record in content.file.",
         ));
     }
 
@@ -267,7 +267,7 @@ fn repack(a: &Repack) -> Result<()> {
     // reserved, so a bad argument fails before a temporary file exists beside
     // the container.
     let source = input::container(&a.container)?;
-    let meta = a.meta.as_deref().map(read_metadata).transpose()?;
+    let flyleaf = a.flyleaf.as_deref().map(read_flyleaf).transpose()?;
 
     let mut out = match &a.output {
         Some(p) => destination(p, a.force)?,
@@ -275,22 +275,22 @@ fn repack(a: &Repack) -> Result<()> {
     };
 
     let mut r = slpc::Repack::new(source);
-    if let Some(d) = &meta {
-        r = r.metadata(d);
+    if let Some(d) = &flyleaf {
+        r = r.flyleaf(d);
     }
-    r = match (a.payload.as_deref(), &a.name) {
+    r = match (a.content.as_deref(), &a.name) {
         (None, _) => r,
-        (Some(p), Some(name)) if input::is_dash(p) => r.payload(name, std::io::stdin().lock()),
+        (Some(p), Some(name)) if input::is_dash(p) => r.content(name, std::io::stdin().lock()),
         (Some(p), Some(name)) => {
             let f = std::fs::File::open(p).context(format!("cannot read {}", p.display()))?;
-            r.payload(name, f)
+            r.content(name, f)
         }
-        (Some(p), None) => r.payload_file(p)?,
+        (Some(p), None) => r.content_file(p)?,
     };
     r.write(out.writer())?;
 
     // Read back what was written before it replaces anything. The library
-    // validates the metadata it is about to store, so this is checking the
+    // validates the flyleaf it is about to store, so this is checking the
     // archive around it, and it is the difference between replacing the only
     // copy of a container on faith and doing it on evidence.
     let verdict = slpc::validate(out.written()?)?;
@@ -307,10 +307,10 @@ fn repack(a: &Repack) -> Result<()> {
     // library cannot help — a caller naming an output file is creating one, and
     // nothing in `Destination::new` knows which container the bytes came out
     // of. This does, and a container repacked from a downloaded one is as much
-    // a thing that arrived from elsewhere as the payload `unpack` writes.
+    // a thing that arrived from elsewhere as the content file `unpack` writes.
     //
     // Not a failure when it cannot be done, which is where this differs from
-    // `unpack` above. What that guards is a payload about to be handed to the
+    // `unpack` above. What that guards is a content file about to be handed to the
     // system; this is a container, and nothing opens a container but this tool,
     // which reports provenance rather than acting on it. So the copy is left
     // and the loss is said out loud.
@@ -334,64 +334,64 @@ fn unpack(a: Unpack) -> Result<()> {
     let mut c = Container::read(input::container(&a.container)?)?;
     let dest = a.dest.unwrap_or_else(|| PathBuf::from("."));
 
-    // Through `payload_path` rather than `dest.join`, and the comment this
-    // replaces is why. It said: payload.file is a plain filename, checked
+    // Through `content_path` rather than `dest.join`, and the comment this
+    // replaces is why. It said: content.file is a plain filename, checked
     // against SPEC 2.3 when the container was read, so joining it to a
     // destination cannot leave that destination. True, and not the question —
     // `CON` does not leave the directory, it is not in it. Leaving the
     // directory was never the only way for a name to fail to be a file.
-    let out = slpc::payload_path(&dest, c.payload_name())?;
-    let mut payload_out = Destination::new(&out, a.force)?;
+    let out = slpc::content_path(&dest, c.content_name())?;
+    let mut content_out = Destination::new(&out, a.force)?;
 
     // Both destinations are reserved before either is written, which catches
     // the ordinary case early. It is not the guarantee — see the commit order
     // below.
-    let mut metadata_out = if a.metadata {
-        let bytes = c.metadata_bytes().to_vec();
-        let mut d = Destination::new(&dest.join(slpc::METADATA_MEMBER), a.force)?;
+    let mut flyleaf_out = if a.flyleaf {
+        let bytes = c.flyleaf_bytes().to_vec();
+        let mut d = Destination::new(&dest.join(slpc::FLYLEAF_MEMBER), a.force)?;
         d.writer()
             .write_all(&bytes)
-            .context("cannot write the metadata")?;
+            .context("cannot write the flyleaf")?;
         Some(d)
     } else {
         None
     };
 
-    std::io::copy(&mut c.payload()?, payload_out.writer()).context("cannot write the payload")?;
+    std::io::copy(&mut c.content()?, content_out.writer()).context("cannot write the content file")?;
 
-    // The metadata lands first, and the order is the whole point. Both
+    // The flyleaf lands first, and the order is the whole point. Both
     // destinations are reserved before either is written, but reserving is a
     // check and committing is the guarantee: `Destination::new` asks whether
     // the path exists and a dangling symbolic link answers no, so the refusal
-    // arrives at the no-clobber rename instead. Committing the payload first
+    // arrives at the no-clobber rename instead. Committing the content file first
     // left it on disk, unmarked, while the command exited non-zero — measured
     // 2026-08-27, and the comment above this block used to claim the reserving
     // made that impossible. Committing the smaller file first means a failure
     // there leaves nothing at all.
-    let metadata_landed = match metadata_out.take() {
+    let flyleaf_landed = match flyleaf_out.take() {
         Some(d) => {
-            let at = dest.join(slpc::METADATA_MEMBER);
+            let at = dest.join(slpc::FLYLEAF_MEMBER);
             d.commit()?;
             Some(at)
         }
         None => None,
     };
-    // A failure here has already written the metadata, and leaving it is the
+    // A failure here has already written the flyleaf, and leaving it is the
     // state the reorder above was meant to stop existing: a command that exited
     // non-zero and left a file behind, which the obvious retry then fails on.
     // So it goes back. Only the file this run created — `Destination` refused
     // to replace anything that was already there, so there is nothing of
     // anybody else's to remove.
-    if let Err(e) = payload_out.commit() {
-        if let Some(at) = metadata_landed {
+    if let Err(e) = content_out.commit() {
+        if let Some(at) = flyleaf_landed {
             let _ = std::fs::remove_file(at);
         }
         return Err(e);
     }
 
     // What the platform records about where the container came from, carried
-    // onto the payload. Without it, unpacking a downloaded container hands its
-    // payload to whatever opens it next as something this machine made, and
+    // onto the content file. Without it, unpacking a downloaded container hands its
+    // content file to whatever opens it next as something this machine made, and
     // the warning the platform would have shown never appears. `slpc`'s
     // provenance module holds the rule; an error from it means the copy is
     // ungated where the container was not.
@@ -406,7 +406,7 @@ fn unpack(a: Unpack) -> Result<()> {
     // is what dropped it, and this cannot see that far.
     if !input::is_dash(&a.container) {
         if let Err(e) = slpc::provenance::carry(&a.container, &out) {
-            // The payload is on disk and the platform would have stopped
+            // The content file is on disk and the platform would have stopped
             // somebody opening the container it came out of. Leaving it is
             // leaving exactly the file this is here to prevent — one that
             // opens without the warning its origin earned — so it goes, and
@@ -414,7 +414,7 @@ fn unpack(a: Unpack) -> Result<()> {
             // about a container it could not finish writing.
             let removed = std::fs::remove_file(&out).is_ok();
             return Err(Failure::new(format!(
-                "cannot carry where {} came from onto its payload: {e}\n                 The payload {}, because opening it would not raise the \
+                "cannot carry where {} came from onto its content: {e}\n                 The content {}, because opening it would not raise the \
                  warning the container would have.",
                 input::name_of(&a.container),
                 if removed {
@@ -428,7 +428,7 @@ fn unpack(a: Unpack) -> Result<()> {
     Ok(())
 }
 
-/// Print the metadata member as stored, byte for byte.
+/// Print the flyleaf member as stored, byte for byte.
 ///
 /// Not a re-serialization of it: this way the output is what the container
 /// actually holds, comments and key order included, and it goes into another
@@ -437,7 +437,7 @@ fn info(path: &Path) -> Result<()> {
     use std::io::IsTerminal as _;
 
     let c = Container::read(input::container(path)?)?;
-    let bytes = c.metadata_bytes();
+    let bytes = c.flyleaf_bytes();
     let mut out = std::io::stdout();
 
     // One verb, two jobs, split where `ls` and `git` split them. Redirected
@@ -466,7 +466,7 @@ fn info(path: &Path) -> Result<()> {
 fn validate(path: &Path) -> Result<()> {
     // Read the source once. `-` spools standard input to a file, and standard
     // input cannot be read a second time, so the rewind below is what lets the
-    // conformant case name the payload without asking for the bytes again.
+    // conformant case name the content file without asking for the bytes again.
     let mut source = input::container(path)?;
     let verdict = slpc::validate(&mut source)?;
 
@@ -478,13 +478,13 @@ fn validate(path: &Path) -> Result<()> {
             source.rewind().context("cannot re-read the container")?;
             let c = Container::read(source)?;
             // Through `display_name`, because this line is read by somebody
-            // deciding what a container holds and a payload called
+            // deciding what a container holds and a content file called
             // `report<U+202E>fdp.exe` reads as `report.pdf` in every terminal
             // that applies the override (SPEC 3).
             println!(
-                "conformant — slipcase {}, payload {}",
+                "conformant — slipcase {}, content file {}",
                 c.version(),
-                slpc::display_name(c.payload_name())
+                slpc::display_name(c.content_name())
             );
             Ok(())
         }

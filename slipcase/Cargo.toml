@@ -1,6 +1,6 @@
 [package]
 name = "slipcase"
-description = "Pack, unpack, repack, inspect, and validate Slipcase containers: a ZIP holding a payload file and the TOML metadata that describes it"
+description = "Pack, unpack, repack, inspect, and validate Slipcase containers: a ZIP holding a content file and the TOML flyleaf that describes it"
 homepage = "https://slipcaseformat.org"
 readme = "README.md"
 
@@ -17,7 +17,7 @@ readme = "README.md"
 # third copy here to satisfy the packager would be undoing that on purpose. The
 # test needs the workspace, so it stays in the workspace.
 exclude = ["tests/cli.rs"]
-keywords = ["slipcase", "container", "metadata", "zip", "cli"]
+keywords = ["slipcase", "container", "flyleaf", "zip", "cli"]
 categories = ["command-line-utilities", "filesystem"]
 version.workspace = true
 edition.workspace = true
@@ -58,7 +58,7 @@ maintainer = "David M. Anderson <david.anderson@excelano.com>"
 # One line per sentence: cargo-deb re-wraps this, and a source line broken
 # mid-sentence comes out broken in `apt show`.
 extended-description = """
-slipcase attaches metadata to a file without changing it. A .slpc container is a ZIP archive holding one payload file of any type together with a TOML document describing it, so that copying, moving, or sending the payload carries its metadata along.
+slipcase attaches a flyleaf to a file without changing it. A .slpc container is a ZIP archive holding one content file of any type together with a TOML document describing it, so that copying, moving, or sending the content file carries its flyleaf along.
 Five verbs: pack, unpack, repack, info, and validate. The format is specified independently of this tool, and ordinary ZIP utilities can read a container without it."""
 section = "utils"
 priority = "optional"

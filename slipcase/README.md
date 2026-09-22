@@ -1,10 +1,10 @@
 # slipcase
 
 The command-line tool for [Slipcase](https://slipcaseformat.org), a
-container format that attaches metadata to a file.
+container format that binds a file to a flyleaf describing it.
 
 <!-- shared:blurb -->
-A `.slpc` file is a ZIP archive holding a payload file of any type together with a TOML metadata document describing it. The two become one file, so copying, moving, or sending the payload carries its metadata along.
+A `.slpc` file is a ZIP archive holding a content file of any type together with a TOML flyleaf document describing it. The two become one file, so copying, moving, or sending the content file carries its flyleaf along.
 <!-- /shared:blurb -->
 
 <!-- shared:install -->
@@ -46,7 +46,7 @@ winget install Excelano.slipcase-cli
 
 The identifier carries `-cli` and the command does not: what lands on the path
 is `slipcase`. `winget install slipcase` reaches Slipcase Desktop, the viewer
-and metadata editor, which is a different program that opens containers rather
+and flyleaf editor, which is a different program that opens containers rather
 than a command that makes them.
 
 Without winget, in PowerShell:
@@ -71,25 +71,25 @@ ARM, Windows on Intel — each with a `.sha256` beside it.
 
 <!-- shared:verbs -->
 ```
-slipcase pack report.pdf --meta owner.toml       # writes report.pdf.slpc
-slipcase info report.pdf.slpc                    # prints the metadata; verbatim when redirected
-slipcase repack report.pdf.slpc --meta new.toml  # changes it in place, keeping the rest
-slipcase validate report.pdf.slpc                # exit 0 if conformant
-slipcase unpack report.pdf.slpc --dest ./out     # writes the payload and nothing else
+slipcase pack report.pdf --flyleaf owner.toml       # writes report.pdf.slpc
+slipcase info report.pdf.slpc                       # prints the flyleaf; verbatim when redirected
+slipcase repack report.pdf.slpc --flyleaf new.toml  # changes it in place, keeping the rest
+slipcase validate report.pdf.slpc                   # exit 0 if conformant
+slipcase unpack report.pdf.slpc --dest ./out        # writes the content file and nothing else
 ```
 <!-- /shared:verbs -->
 
 Five verbs, each doing one thing the format supports. `pack` sets both required
-metadata keys itself, so a `--meta` file that contradicts either is refused
-rather than silently overwritten, and a payload whose filename cannot be a
-member name is rejected rather than renamed. `unpack` writes the payload and,
-with `--metadata`, the metadata document; nothing else in the archive reaches
+flyleaf keys itself, so a `--flyleaf` file that contradicts either is refused
+rather than silently overwritten, and a content file whose filename cannot be a
+member name is rejected rather than renamed. `unpack` writes the content file and,
+with `--flyleaf`, the flyleaf document; nothing else in the archive reaches
 disk. It also carries whatever the platform records about where the container
-came from onto the payload, so that unpacking something downloaded does not hand
-its payload on as a file this machine made — and where it cannot, it removes the
-payload and says so rather than leaving one that opens without the warning its
+came from onto the content file, so that unpacking something downloaded does not hand
+its content file on as a file this machine made — and where it cannot, it removes the
+content file and says so rather than leaving one that opens without the warning its
 origin earned. A container read from standard input has no source to read that
-from and is unpacked without it. `repack` changes the metadata, the payload, or both, and copies every
+from and is unpacked without it. `repack` changes the flyleaf, the content file, or both, and copies every
 other member of the archive through untouched — which is how a container is
 changed without losing what this tool does not understand, and why unpacking and
 packing again is the wrong way to do it.

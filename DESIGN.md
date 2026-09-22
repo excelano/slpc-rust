@@ -44,7 +44,7 @@ The format is ZIP plus TOML, and both have mature pure-Rust libraries. The imple
 
 Four assumptions about the ZIP crate were checked against `zip` 8.6 before the design leaned on them. All four hold.
 
-**Member names are decoded per general purpose bit 11 by the crate itself**, UTF-8 when the flag is set and CP437 otherwise, which is what the specification requires for matching `payload.file`. The CP437 table is total over all 256 bytes.
+**Member names are decoded per general purpose bit 11 by the crate itself**, UTF-8 when the flag is set and CP437 otherwise, which is what the specification requires for matching `content.file`. The CP437 table is total over all 256 bytes.
 
 **An entry's type is readable.** `unix_mode` reads the high half of the external attributes, which is where any archiver that can express something other than an ordinary file puts it. Which types SPEC §2.3 excludes is read from the specification. An entry made on FAT carries no such bits and the crate synthesizes an ordinary file mode, which is both true and the safe direction to be wrong in.
 
@@ -54,9 +54,9 @@ Four assumptions about the ZIP crate were checked against `zip` 8.6 before the d
 
 Two assumptions sat inside those, unstated, and neither holds.
 
-**The crate cannot count members.** `ZipArchive` keys its directory by name, so two members sharing one arrive as a single entry. SPEC §2.1 requires exactly one member named `slipcase.metadata.toml` and exactly one matching `payload.file`, which is a question the crate cannot be asked. The central directory is therefore read here, in `central.rs`, for names alone; members are still located and read through the crate. That module carries its own CP437 table, transcribed from the crate's, so the two cannot disagree about what a name decodes to.
+**The crate cannot count members.** `ZipArchive` keys its directory by name, so two members sharing one arrive as a single entry. SPEC §2.1 requires exactly one member named `slipcase.flyleaf.toml` and exactly one matching `content.file`, which is a question the crate cannot be asked. The central directory is therefore read here, in `central.rs`, for names alone; members are still located and read through the crate. That module carries its own CP437 table, transcribed from the crate's, so the two cannot disagree about what a name decodes to.
 
-**A name the crate hands back cannot be trusted to be the name.** When bit 11 is set but the name bytes are not valid UTF-8, the crate substitutes U+FFFD rather than reporting it, and nothing in the public API says which decoding it chose. A `payload.file` carrying U+FFFD could then match a member whose real name is something else, putting the result at the mercy of member order the specification forbids depending on. The rule that closes it needs no flag: CP437 decoding never produces U+FFFD, so a decoded name carrying one over bytes that are not valid UTF-8 came from the lossy branch, and that member's true name is not a Rust string and equals no `payload.file`, which always is one. Such a member never matches.
+**A name the crate hands back cannot be trusted to be the name.** When bit 11 is set but the name bytes are not valid UTF-8, the crate substitutes U+FFFD rather than reporting it, and nothing in the public API says which decoding it chose. A `content.file` carrying U+FFFD could then match a member whose real name is something else, putting the result at the mercy of member order the specification forbids depending on. The rule that closes it needs no flag: CP437 decoding never produces U+FFFD, so a decoded name carrying one over bytes that are not valid UTF-8 came from the lossy branch, and that member's true name is not a Rust string and equals no `content.file`, which always is one. Such a member never matches.
 
 **The minimum supported Rust version is 1.88, and it comes from the dependencies rather than from this code.** The fleet measures the floor and declares it; 1.88 is what `zip` asks for, above `toml_edit`'s 1.85 and everything below them, and it was built and run rather than read off a manifest. It rises whenever the ZIP or TOML crates raise theirs, which is why the manifest says so where it declares the number: a consumer reading `rust-version` cannot otherwise tell an inherited floor from a chosen one.
 
@@ -71,79 +71,79 @@ Reading needs `Read + Seek`, because a ZIP's central directory is at the end of 
 ```rust
 let mut c = Container::open("report.pdf.slpc")?;   // also: Container::read(reader)
 c.version();          // the slipcase_version as written
-c.payload_name();     // the value of payload.file
-c.metadata();         // &DocumentMut — the whole TOML document, unknown keys intact
-c.metadata_mut();     // &mut DocumentMut — changed in place
-c.metadata_bytes();   // &[u8] — the metadata member as stored, byte for byte
-c.payload_size()?;    // u64 — uncompressed, read off the central directory
-c.check_payload_readable()?;  // -> Result<(), Unsupported> — can this build decode it
-let mut r = c.payload()?;   // impl Read — streams, never buffered whole
+c.content_name();     // the value of content.file
+c.flyleaf();         // &DocumentMut — the whole TOML document, unknown keys intact
+c.flyleaf_mut();     // &mut DocumentMut — changed in place
+c.flyleaf_bytes();   // &[u8] — the flyleaf member as stored, byte for byte
+c.content_size()?;    // u64 — uncompressed, read off the central directory
+c.check_content_readable()?;  // -> Result<(), Unsupported> — can this build decode it
+let mut r = c.content()?;   // impl Read — streams, never buffered whole
 
-slpc::metadata_of(reader)?;   // -> DocumentMut — the document, no verdict attached
+slpc::flyleaf_of(reader)?;   // -> DocumentMut — the document, no verdict attached
 
-slpc::pack_reader(payload_name, reader, metadata, writer)?;   // metadata: Into<DocumentMut>
-slpc::pack_file(&payload_path, metadata, writer)?;            // name taken from the path
-slpc::rewrite_metadata(reader, &document, writer)?;
-slpc::rewrite_metadata_bytes(reader, &bytes, writer)?;
+slpc::pack_reader(content_name, reader, flyleaf, writer)?;   // flyleaf: Into<DocumentMut>
+slpc::pack_file(&content_path, flyleaf, writer)?;            // name taken from the path
+slpc::rewrite_flyleaf(reader, &document, writer)?;
+slpc::rewrite_flyleaf_bytes(reader, &bytes, writer)?;
 slpc::validate(reader)?;   // -> Verdict
 
 slpc::Repack::new(reader)          // change a container that already exists
-    .metadata(&document)           // also: .metadata_bytes(&bytes)
-    .payload(name, reader)         // also: .payload_file(&path)
+    .flyleaf(&document)           // also: .flyleaf_bytes(&bytes)
+    .content(name, reader)         // also: .content_file(&path)
     .write(writer)?;
 
 // With the `fs` feature. §4.7.
 let mut out = slpc::Destination::new(&path, force)?;   // also: ::in_place(&path)
-slpc::pack_file(&payload_path, metadata, out.writer())?;
+slpc::pack_file(&content_path, flyleaf, out.writer())?;
 slpc::validate(out.written()?)?;   // read back before anything is replaced
 out.commit()?;
 ```
 
 The container is `mut` because the archive lends out one member at a time, which is the ZIP crate's shape rather than a choice made here.
 
-**The payload is never read into memory.** A library that returns `Vec<u8>` decides for its caller that the file fits in RAM.
+**The content file is never read into memory.** A library that returns `Vec<u8>` decides for its caller that the file fits in RAM.
 
 **Nothing on the write side takes or returns a container.** Each operation reads a stream and writes a stream. Hanging the write path off `Container` would be choosing a namespace rather than describing a relationship — the difference between `File::create` and `fs::copy`.
 
-**`Repack` is a type because its arguments are optional and independent.** Three functions each taking the source and one replacement do not compose into the fourth: running two in sequence would mean buffering a whole container between them. `rewrite_metadata` and `rewrite_metadata_bytes` stay as they are, since the case with one thing to change should not need a builder, and they were published before this existed.
+**`Repack` is a type because its arguments are optional and independent.** Three functions each taking the source and one replacement do not compose into the fourth: running two in sequence would mean buffering a whole container between them. `rewrite_flyleaf` and `rewrite_flyleaf_bytes` stay as they are, since the case with one thing to change should not need a builder, and they were published before this existed.
 
-**No vocabulary.** The library exposes the metadata document and typed accessors for the two structural keys. It defines no others, validates no others, and has no opinion on what any of them mean.
+**No vocabulary.** The library exposes the flyleaf document and typed accessors for the two structural keys. It defines no others, validates no others, and has no opinion on what any of them mean.
 
-### 4.2 Metadata, at two levels
+### 4.2 Flyleaf, at two levels
 
 The document behaves as a map: indexable, iterable, open to insertion and removal. Read-modify-write goes through it and keeps the comments, key order, and whitespace §3 chose this representation for. A second plain-map representation with a write path attached would be a convenient way to discard all of that without noticing, so there is not one.
 
-The bytes are for a caller who wants a different parser, a schema validator, or a hash. They are the member as stored, so a container can be re-emitted byte for byte, which no other path promises: the specification defines no canonical serialization. A signature mechanism, whenever one arrives, will need those bytes rather than a re-serialization of them. Reading them buffers, which the rule above permits — that rule is about payloads of arbitrary size, not about the metadata member.
+The bytes are for a caller who wants a different parser, a schema validator, or a hash. They are the member as stored, so a container can be re-emitted byte for byte, which no other path promises: the specification defines no canonical serialization. A signature mechanism, whenever one arrives, will need those bytes rather than a re-serialization of them. Reading them buffers, which the rule above permits — that rule is about contents of arbitrary size, not about the flyleaf member.
 
-**Building metadata is not the same operation as changing it.** Building from nothing has no formatting to preserve, and a caller generating metadata out of a database or a build system would rather hand over a struct or a map than assemble a document by hand. Both packing forms therefore accept anything convertible into one, serde included.
+**Building flyleaf is not the same operation as changing it.** Building from nothing has no formatting to preserve, and a caller generating flyleaf out of a database or a build system would rather hand over a struct or a map than assemble a document by hand. Both packing forms therefore accept anything convertible into one, serde included.
 
 ### 4.3 Packing
 
-`pack_reader` takes a name and a `Read`, not a `Read + Seek`: requiring seek would rule out pipes, sockets, and anything generated as it is written, which is why the reader form exists. The payload's length is unknown when the local header goes down, so the member carries a data descriptor, which §3 confirmed the crate emits over a `Write`-only writer. Packing therefore asks for no `Seek` at either end, and a container can be packed from a pipe straight into a socket. Repacking is the other case, for the reason in §4.4.
+`pack_reader` takes a name and a `Read`, not a `Read + Seek`: requiring seek would rule out pipes, sockets, and anything generated as it is written, which is why the reader form exists. The content file's length is unknown when the local header goes down, so the member carries a data descriptor, which §3 confirmed the crate emits over a `Write`-only writer. Packing therefore asks for no `Seek` at either end, and a container can be packed from a pipe straight into a socket. Repacking is the other case, for the reason in §4.4.
 
 `pack_file` could measure a file and read it twice, and does not: it goes through the same streaming core, and one path is easier to keep right than two.
 
 **The two forms fail differently, and the errors say so.** `pack_reader` is handed a name and checks it against SPEC §2.3; `pack_file` derives one, so its failure is that a file on disk is called something no member can be called. Collapsing them would have the second complain about an argument the caller never supplied.
 
-**The library sets both required keys itself** — `payload.file` from the name being written, `slipcase_version` from the build — so a caller cannot be inconsistent about either. Metadata arriving with a `payload.file` that disagrees is an error rather than a silent overwrite, since the library cannot tell which of the two was meant. Everything else in the document passes through untouched.
+**The library sets both required keys itself** — `content.file` from the name being written, `slipcase_version` from the build — so a caller cannot be inconsistent about either. A flyleaf arriving with a `content.file` that disagrees is an error rather than a silent overwrite, since the library cannot tell which of the two was meant. Everything else in the document passes through untouched.
 
 **There is no bare `pack`.** The two forms differ in more than convenience, and a call site reads better for saying which it meant. The read path keeps `open` and `read` rather than matching this, because `Container::open` follows `File::open`.
 
 ### 4.4 Repacking
 
-The specification requires that members an implementation does not recognize survive a rewrite. `Repack` copies every member through and substitutes only the ones being replaced, streaming rather than holding a container in memory. Copying a member whose compression method the crate cannot decompress means copying its compressed bytes untouched, which §3 confirmed the crate will do, and it is what allows a container to be rewritten without being fully understood. A member nothing replaces comes out byte for byte, the metadata member included when nothing about it changed.
+The specification requires that members an implementation does not recognize survive a rewrite. `Repack` copies every member through and substitutes only the ones being replaced, streaming rather than holding a container in memory. Copying a member whose compression method the crate cannot decompress means copying its compressed bytes untouched, which §3 confirmed the crate will do, and it is what allows a container to be rewritten without being fully understood. A member nothing replaces comes out byte for byte, the flyleaf member included when nothing about it changed.
 
-**`payload.file` is set by the library exactly when the library is writing the payload member.** Both packing forms set it, and so does repacking a payload. A metadata-only rewrite does not, because there the caller may be repointing the key at a member already in the archive and only they know which; the key is checked against the archive instead.
+**`content.file` is set by the library exactly when the library is writing the content member.** Both packing forms set it, and so does repacking a content file. A flyleaf-only rewrite does not, because there the caller may be repointing the key at a member already in the archive and only they know which; the key is checked against the archive instead.
 
-Where a payload does arrive with a name of its own, a document handed in has that key set rather than checked. This is the one place the library overwrites a value a caller supplied, and it is not the silent overwrite §4.3 refuses: the value the document carried named the member being replaced. Bytes handed in are refused rather than corrected, since correcting them would mean they were no longer the bytes handed in.
+Where a content file does arrive with a name of its own, a document handed in has that key set rather than checked. This is the one place the library overwrites a value a caller supplied, and it is not the silent overwrite §4.3 refuses: the value the document carried named the member being replaced. Bytes handed in are refused rather than corrected, since correcting them would mean they were no longer the bytes handed in.
 
-**A payload cannot be written under a name another member already carries.** SPEC §2.1 allows exactly one member under `payload.file`, and which of two was the payload would depend on the order they sat in. The name is therefore checked against the archive the payload is going into rather than the one it came from.
+**A content file cannot be written under a name another member already carries.** SPEC §2.1 allows exactly one member under `content.file`, and which of two was the content file would depend on the order they sat in. The name is therefore checked against the archive the content file is going into rather than the one it came from.
 
 **Repacking writes to a stream it can seek in, and packing does not.** A member copied through already knows its compressed size, and a writer that cannot seek has nowhere to put it but a data descriptor after the data — a promise to a reader walking forward that a length is coming. The bound costs a caller nothing, since repacking's source has to seek regardless: a ZIP's central directory is at the end of the file, so a pipe was never a possible source.
 
 The defect behind it is invisible from inside: `zip` 8.6 sets the data descriptor flag on a raw-copied member in a stream writer and then writes no descriptor, so the local header claims a length of zero. Readers that walk the central directory are unaffected, which is this library's own reader and every test it had; Info-ZIP walks forward and exits 12. A test now asserts that no member comes out promising a descriptor.
 
-**The library validates what it is about to write, against the rules it reads by.** Metadata is parsed and the payload located by the same code the read path uses, so what this writes is what it would accept back and neither half can drift from the other. Without these checks, `rewrite_metadata_bytes` is a way to produce a non-conformant container from the reference implementation. Malformed containers for tests come from the conformance corpus, which §7 builds upstream and deliberately not with this tool.
+**The library validates what it is about to write, against the rules it reads by.** The flyleaf is parsed and the content file located by the same code the read path uses, so what this writes is what it would accept back and neither half can drift from the other. Without these checks, `rewrite_flyleaf_bytes` is a way to produce a non-conformant container from the reference implementation. Malformed containers for tests come from the conformance corpus, which §7 builds upstream and deliberately not with this tool.
 
 ### 4.5 Errors and verdicts
 
@@ -151,13 +151,13 @@ The defect behind it is invisible from inside: `zip` 8.6 sets the data descripto
 - **Malformed** — this is not a conformant container. Each variant names the rule it violates, so the message can point at a specification clause.
 - **Unsupported** — this is or may be a conformant container, and this build cannot handle it. An encrypted member, a compression method the crate does not implement, a `slipcase_version` this build does not recognize.
 
-**Validation returns a verdict rather than a yes or no.** Four answers, because two will not do: conformant, non-conformant with the rule it breaks, undetermined when the metadata member cannot be read at all, and out of scope when the container declares a version this build does not implement. SPEC §3 forbids reporting a container as conformant *or* as non-conformant when its metadata cannot be read, and SPEC §2.4 puts another version outside the question rather than failing it. A `Result<()>` can say neither thing.
+**Validation returns a verdict rather than a yes or no.** Four answers, because two will not do: conformant, non-conformant with the rule it breaks, undetermined when the flyleaf member cannot be read at all, and out of scope when the container declares a version this build does not implement. SPEC §3 forbids reporting a container as conformant *or* as non-conformant when its flyleaf cannot be read, and SPEC §2.4 puts another version outside the question rather than failing it. A `Result<()>` can say neither thing.
 
-SPEC §2.5 lists compression, encryption, and Zip64 among the properties a container must not be rejected for, so "I cannot read this" and "this is invalid" are different answers. Validation reads the central directory and the metadata member, confirms that exactly one member matches `payload.file` and that the member is a regular file entry, and never decompresses the payload — so a container whose payload uses a compression method this build lacks still validates.
+SPEC §2.5 lists compression, encryption, and Zip64 among the properties a container must not be rejected for, so "I cannot read this" and "this is invalid" are different answers. Validation reads the central directory and the flyleaf member, confirms that exactly one member matches `content.file` and that the member is a regular file entry, and never decompresses the content file — so a container whose content file uses a compression method this build lacks still validates.
 
 ### 4.6 Unrecognized versions
 
-The specification requires that an implementation not assume it can read a container declaring a version it does not recognize. Parsing the metadata is how the version is discovered, so parsing and reporting are always allowed. Extracting the payload and rewriting the container are not: both refuse with `Unsupported`, naming the version found. `payload_size` refuses with the rest, since the payload was never located.
+The specification requires that an implementation not assume it can read a container declaring a version it does not recognize. Parsing the flyleaf is how the version is discovered, so parsing and reporting are always allowed. Extracting the content file and rewriting the container are not: both refuse with `Unsupported`, naming the version found. `content_size` refuses with the rest, since the content file was never located.
 
 ### 4.7 Putting a container on disk
 
@@ -177,25 +177,25 @@ Everything in §4.1 writes into a stream the caller supplies, which is the right
 
 ### 4.8 A document without a verdict
 
-`metadata_of` reads the metadata member and parses it, requiring of that member what SPEC §2.2 requires — one of it, valid TOML, UTF-8 — and asking nothing else. It looks for neither required key and never locates a payload.
+`flyleaf_of` reads the flyleaf member and parses it, requiring of that member what SPEC §2.2 requires — one of it, valid TOML, UTF-8 — and asking nothing else. It looks for neither required key and never locates a content file.
 
-It exists because `Container::read` cannot say two things at once. A container whose `payload.file` names no member, names several, or names something SPEC §2.3 forbids has a metadata document that parsed cleanly, and the read path returns an error over the payload before a caller can reach it. So does one missing a required key. A program showing a person what is in a file wants to show them that document alongside the reason the container is not conformant, and had no way to get it.
+It exists because `Container::read` cannot say two things at once. A container whose `content.file` names no member, names several, or names something SPEC §2.3 forbids has a flyleaf document that parsed cleanly, and the read path returns an error over the content file before a caller can reach it. So does one missing a required key. A program showing a person what is in a file wants to show them that document alongside the reason the container is not conformant, and had no way to get it.
 
-**It is not a verdict and must not become one.** A document coming back says nothing about conformance; `validate` remains the only function here that answers the question SPEC §3 constrains, and the separation is what keeps a caller from reading "the metadata parsed" as "the container is fine". `slipcase info` gains from the same function: it refused a container whose metadata it could read perfectly well.
+**It is not a verdict and must not become one.** A document coming back says nothing about conformance; `validate` remains the only function here that answers the question SPEC §3 constrains, and the separation is what keeps a caller from reading "the flyleaf parsed" as "the container is fine". `slipcase info` gains from the same function: it refused a container whose flyleaf it could read perfectly well.
 
-### 4.9 Whether the payload can be read
+### 4.9 Whether the content file can be read
 
-`check_payload_readable` answers, before anything is extracted, whether this build can decode the payload member. It refuses with the same three `Unsupported` variants `payload` does — an unrecognized version, an encrypted member, a compression method this build lacks — and it meets them in the order the ZIP crate does, so a member that is both encrypted and compressed by a method this build lacks is reported encrypted.
+`check_content_readable` answers, before anything is extracted, whether this build can decode the content member. It refuses with the same three `Unsupported` variants `content()` does — an unrecognized version, an encrypted member, a compression method this build lacks — and it meets them in the order the ZIP crate does, so a member that is both encrypted and compressed by a method this build lacks is reported encrypted.
 
-It exists because a program has to commit to an operation before performing it. A window putting an Open button on a payload card, or a plan stating what it is about to do, had no way to learn the answer except by attempting the extraction and reading it off the failure.
+It exists because a program has to commit to an operation before performing it. A window putting an Open button on a content file card, or a plan stating what it is about to do, had no way to learn the answer except by attempting the extraction and reading it off the failure.
 
-**It borrows shared and reads nothing.** Both facts are already in the central directory entry collected when the container was opened, which is where §4.1's `payload_size` gets its answer for the same reason. The probe it replaces — construct a payload reader and drop it — needed `&mut`, and it seeks and reads a local header on the way, so it could also fail for reasons that are not about capability at all.
+**It borrows shared and reads nothing.** Both facts are already in the central directory entry collected when the container was opened, which is where §4.1's `content_size` gets its answer for the same reason. The probe it replaces — construct a content file reader and drop it — needed `&mut`, and it seeks and reads a local header on the way, so it could also fail for reasons that are not about capability at all.
 
 **The library answers rather than the caller.** Exposing the compression method and the encryption flag would ask a caller to judge a method against a build, which it cannot do: cargo unifies features across the whole dependency graph, so another crate depending on `zip` with `zstd` widens what this library can decode without anything here changing. Which methods a build carries is a fact only that build holds.
 
-**`Ok` is not a promise that extraction succeeds.** It says the decoder exists. Truncated data, a failed checksum, and an i/o error are still ahead, and `payload` reports them when they arrive.
+**`Ok` is not a promise that extraction succeeds.** It says the decoder exists. Truncated data, a failed checksum, and an i/o error are still ahead, and `content()` reports them when they arrive.
 
-**It is not a verdict and must not become one.** SPEC §2.5 puts compression and encryption outside the conformance question, so `validate` reports an encrypted payload conformant and this says the bytes are out of reach. Folding capability into conformance would make the verdict depend on which features the build was compiled with, which is the thing §4.5 keeps `Unsupported` separate from `Malformed` to prevent.
+**It is not a verdict and must not become one.** SPEC §2.5 puts compression and encryption outside the conformance question, so `validate` reports an encrypted content file conformant and this says the bytes are out of reach. Folding capability into conformance would make the verdict depend on which features the build was compiled with, which is the thing §4.5 keeps `Unsupported` separate from `Malformed` to prevent.
 
 The risk it carries is drift: the two conditions are mirrored from inside the ZIP crate, and a version of it that added a third would have the check say yes where extraction says no. A test asserts the two answers agree across every fixture that reaches one, which is the pairing §6's corpus runner makes between verdict and exit code, applied to a smaller question.
 
@@ -203,40 +203,40 @@ The risk it carries is drift: the two conditions are mirrored from inside the ZI
 
 ### 4.10 A legal name that is not a file
 
-`check_payload_name` answers whether a name is legal under SPEC §2.3. `payload_path` answers a question the specification does not ask: whether that legal name, joined to a directory, names a file on the machine doing the joining.
+`check_content_name` answers whether a name is legal under SPEC §2.3. `content_path` answers a question the specification does not ask: whether that legal name, joined to a directory, names a file on the machine doing the joining.
 
-**The argument that `dir.join(name)` suffices was written independently in two codebases, and it is wrong in the same way in both.** It goes: `payload.file` is a plain filename, checked when the container was read against a rule that rejects every separator and every traversal, so joining it to a directory cannot leave that directory. That is true and it is not the question. Win32 resolves `CON`, `COM1`, `AUX`, `LPT1`, `PRN` and `NUL` to devices wherever the name appears, with or without an extension and in any case. `CON` does not leave the directory. It is not in it.
+**The argument that `dir.join(name)` suffices was written independently in two codebases, and it is wrong in the same way in both.** It goes: `content.file` is a plain filename, checked when the container was read against a rule that rejects every separator and every traversal, so joining it to a directory cannot leave that directory. That is true and it is not the question. Win32 resolves `CON`, `COM1`, `AUX`, `LPT1`, `PRN` and `NUL` to devices wherever the name appears, with or without an extension and in any case. `CON` does not leave the directory. It is not in it.
 
 **Measured rather than reasoned about**, one name at a time, because they do not agree with one another. Writing `CON` returned `Ok` at every step and left no file, the bytes having gone to the console; `metadata` then failed with code 87, and `std::fs::read` never returned at all, because it opens the console for reading and waits for input a windowed application will never supply. `LPT1` and `PRN` failed cleanly with `NotFound`. `NUL` succeeded and discarded. There is no single failure to code against, which is why the conformance corpus did not disagree over the case that carries such a name — it hung, twice, for ten minutes, before the case had a name.
 
-**The repair is not a list of reserved names.** Windows looks for those names while it parses a path, and a path in the `\\?\` verbatim form is not parsed that way, so `canonicalize` is asked of the *directory* and the name is joined onto the answer. The name stops being a device without anything here calling it a bad name, and which names are devices stays Windows's business as that list changes. Three alternatives were rejected: refusing these names in `check_payload_name` makes a conformant container unopenable and contradicts SPEC §2.3; renaming the payload substitutes an implementation's judgement for the name a person chose; and refusing extraction with a sentence is the smallest of the three and still turns a conformant container into one this implementation will not open.
+**The repair is not a list of reserved names.** Windows looks for those names while it parses a path, and a path in the `\\?\` verbatim form is not parsed that way, so `canonicalize` is asked of the *directory* and the name is joined onto the answer. The name stops being a device without anything here calling it a bad name, and which names are devices stays Windows's business as that list changes. Three alternatives were rejected: refusing these names in `check_content_name` makes a conformant container unopenable and contradicts SPEC §2.3; renaming the content file substitutes an implementation's judgement for the name a person chose; and refusing extraction with a sentence is the smallest of the three and still turns a conformant container into one this implementation will not open.
 
-**Nowhere but Windows does anything.** `canonicalize` on Unix would also resolve symbolic links, which would quietly move where a caller's payload lands in order to fix a problem that platform does not have, so the other arm joins and returns. This is the first `cfg` in the library's source, and §3's rule is untouched by it: no dependency is added and nothing is compiled that was not compiled before.
+**Nowhere but Windows does anything.** `canonicalize` on Unix would also resolve symbolic links, which would quietly move where a caller's content file lands in order to fix a problem that platform does not have, so the other arm joins and returns. This is the first `cfg` in the library's source, and §3's rule is untouched by it: no dependency is added and nothing is compiled that was not compiled before.
 
 **It reports where the file is, not how the caller spelled it.** `canonicalize` expands 8.3 short names and resolves junctions as well as adding the prefix, so a caller passing `C:\\Users\\RUNNER~1\\…` gets `C:\\Users\\runneradmin\\…` back. That is the canonical name of the same file and the one a person can paste into Explorer, so it is left as it comes rather than folded back to the caller's spelling — but a caller comparing the result against a path of their own has to compare files rather than strings. Measured on a Windows runner by a test that asserted the spelling and was wrong to.
 
 **It costs a display rule, paid separately.** The path handed back is the verbatim one, because that is what addresses the file, and the prefix is how a path is addressed rather than part of its name. `display_path` takes it off and nothing else does, so *Extracted to* does not show somebody a spelling they have never seen and could not type. `already_exists` goes through it too, that message being read by a person deciding what to do about the file.
 
-**What is not fixed is the handover.** A payload named for a device now extracts as an ordinary file and is read back byte for byte; asking the shell to open it still fails, with *the specified device name is invalid*. That is the truth about that container on that platform rather than a defect left standing.
+**What is not fixed is the handover.** A content file named for a device now extracts as an ordinary file and is read back byte for byte; asking the shell to open it still fails, with *the specified device name is invalid*. That is the truth about that container on that platform rather than a defect left standing.
 
 
 ### 4.11 Where a container came from
 
-A container downloaded from the internet is marked as such by the platform that downloaded it: `com.apple.quarantine` on macOS, a `Zone.Identifier` alternate data stream on Windows, `user.xdg.origin.url` on Linux by freedesktop convention. All three are properties of the file rather than of its contents, so a payload written out of that container carries none of them unless something puts them there.
+A container downloaded from the internet is marked as such by the platform that downloaded it: `com.apple.quarantine` on macOS, a `Zone.Identifier` alternate data stream on Windows, `user.xdg.origin.url` on Linux by freedesktop convention. All three are properties of the file rather than of its contents, so a content file written out of that container carries none of them unless something puts them there.
 
-**Without that, unpacking is laundering.** Somebody downloads a container, takes the payload out, and it reaches its handler as something this machine made; the warning the platform would have raised never appears. That is the shape of defect that made disk images and archives the delivery vehicle of choice, and it is why refusing a payload name with a separator is not the end of what unpacking owes. `slipcase unpack` did exactly this from 0.1.0 until 0.3.5.
+**Without that, unpacking is laundering.** Somebody downloads a container, takes the content file out, and it reaches its handler as something this machine made; the warning the platform would have raised never appears. That is the shape of defect that made disk images and archives the delivery vehicle of choice, and it is why refusing a content name with a separator is not the end of what unpacking owes. `slipcase unpack` did exactly this from 0.1.0 until 0.3.5.
 
 **Why the library rather than the caller**, which is §4.7's question and gets §4.7's answer. The code has no format knowledge, and neither has `Container::open`; what decides it is that a defect held once is fixed where a defect copied is rediscovered. The proof is on the record rather than hypothetical: `excelano/slipcase-desktop` wrote this module first, and the reasoning error §4.10 describes was written independently in both repositories, in nearly the same words. Two callers reasoned out the same half-question and both got it wrong.
 
-**The policy is here and not split with the caller.** `carry` fails only when the platform gates opening on a mark, the source carries one, and the copy ends up carrying none. Everything else succeeds — no mark, no such mark on this platform, a note nothing enforces, a mark the platform wrote itself. So the whole of the rule for a caller about to hand a payload to the system is that an error means do not open it. It is deliberately a test of the copy rather than of the write's own success: under the macOS App Sandbox the platform marks whatever the calling process writes and then refuses to have that mark replaced, so the write fails while the gate it exists for is in place, and `Mark::AlreadyMarked` says so. Asking the file rather than the environment is also why nothing here asks whether it is sandboxed.
+**The policy is here and not split with the caller.** `carry` fails only when the platform gates opening on a mark, the source carries one, and the copy ends up carrying none. Everything else succeeds — no mark, no such mark on this platform, a note nothing enforces, a mark the platform wrote itself. So the whole of the rule for a caller about to hand a content file to the system is that an error means do not open it. It is deliberately a test of the copy rather than of the write's own success: under the macOS App Sandbox the platform marks whatever the calling process writes and then refuses to have that mark replaced, so the write fails while the gate it exists for is in place, and `Mark::AlreadyMarked` says so. Asking the file rather than the environment is also why nothing here asks whether it is sandboxed.
 
-**Linux is a note and says so.** Nothing there consults `user.xdg.origin.url` before opening a file, so carrying it is hygiene rather than a control. `Mark::Noted` is a separate answer from `Mark::Carried` precisely so that nothing reads one as the other, and the Linux arm never fails: refusing to hand over a payload because a note nothing reads could not be written would be theatre.
+**Linux is a note and says so.** Nothing there consults `user.xdg.origin.url` before opening a file, so carrying it is hygiene rather than a control. `Mark::Noted` is a separate answer from `Mark::Carried` precisely so that nothing reads one as the other, and the Linux arm never fails: refusing to hand over a content file because a note nothing reads could not be written would be theatre.
 
 **Off by default, and `fs` implies it.** A caller who only unpacks containers they made themselves does not need it. A caller who replaces containers does, whether they know it or not: `Destination::in_place` renames a fresh file over the original and a fresh file carries no mark, so an in-place rewrite without this feature strips whatever the platform had recorded — the laundering §4.11 exists to prevent, arriving through the door §4.11 was not watching. The other direction is deliberate and stays: `provenance` does not imply `fs`, because carrying a mark between two paths needs no temporary file. It adds one crate on Unix on top of `fs`, whose `xattr` tree of `rustix`, `bitflags` and `linux-raw-sys` `tempfile` already brings in, four on its own, and nothing at all on Windows, where a stream is addressed by appending `:name` to a path and `std::fs` reaches it. §3's rule against compiling C is untouched: every one of the four is declarations rather than C to build.
 
-**What the CLI does with a failure is the CLI's, and it removes the payload.** The file is on disk, the platform would have stopped somebody opening the container it came out of, and leaving it is leaving precisely the artifact this exists to prevent. `Destination` takes the same line about a container it could not finish writing. A container read from standard input is skipped rather than failed: there is no source to read a mark from, and what dropped it down the pipe is not something this can see.
+**What the CLI does with a failure is the CLI's, and it removes the content file.** The file is on disk, the platform would have stopped somebody opening the container it came out of, and leaving it is leaving precisely the artifact this exists to prevent. `Destination` takes the same line about a container it could not finish writing. A container read from standard input is skipped rather than failed: there is no source to read a mark from, and what dropped it down the pipe is not something this can see.
 
-**What it does not reach.** A payload extracted somewhere with no room for the mark is the failure above and is reported. A filesystem that will not hold an extended attribute at all — `tmpfs` mounted `nouser_xattr`, a FAT volume — makes the tests announce a skip rather than pass quietly, because a run that proved nothing should not read like one that did.
+**What it does not reach.** A content file extracted somewhere with no room for the mark is the failure above and is reported. A filesystem that will not hold an extended attribute at all — `tmpfs` mounted `nouser_xattr`, a FAT volume — makes the tests announce a skip rather than pass quietly, because a run that proved nothing should not read like one that did.
 
 **`AlreadyMarked` keeps the source's value beside the platform's mark.** Under the App Sandbox the platform overwrites the source's mark with one naming the writing process, so without this a caller that reports provenance — `slipcase-desktop`'s card is the one that does — cannot tell a container that arrived from elsewhere from one made on the machine: the gate stays in place and the application quietly stops telling the truth.
 
@@ -244,7 +244,7 @@ What is unavoidable is *attribution through the platform*: measured inside a bun
 
 What the sandbox does not refuse is an attribute of our own. `com.excelano.slipcase.origin` holds the source's quarantine value verbatim — agent, timestamp and event identifier — and the three things that make it work were measured rather than assumed: a sandboxed process can write it, the refusal being specific to `com.apple.quarantine` and not to extended attributes; it survives `-[NSFileManager replaceItemAtURL:]`, which is the operation that destroys the attribution in the first place; and it is as writable and removable by us as by anyone. `Mark::Recorded` is `AlreadyMarked` with that detail recovered.
 
-**It is a note and never a gate, and the two questions stay apart.** `arrived_from_elsewhere` consults it; `carries_a_mark` must not, because nothing outside this crate reads it and a caller deciding whether to hand a payload to the system would be reading our own writing as the platform's word. Collapsing those two is the defect that made a container built on the machine report itself as downloaded, and they were separated for that reason. The note being forgeable costs nothing on the same argument: a forged one can only make a caller report provenance it cannot prove, and over-reporting is the side this section errs on deliberately, while removing one is no easier than removing the quarantine attribute beside it.
+**It is a note and never a gate, and the two questions stay apart.** `arrived_from_elsewhere` consults it; `carries_a_mark` must not, because nothing outside this crate reads it and a caller deciding whether to hand a content file to the system would be reading our own writing as the platform's word. Collapsing those two is the defect that made a container built on the machine report itself as downloaded, and they were separated for that reason. The note being forgeable costs nothing on the same argument: a forged one can only make a caller report provenance it cannot prove, and over-reporting is the side this section errs on deliberately, while removing one is no easier than removing the quarantine attribute beside it.
 
 **It is named for the format, not for this crate or any application**, matching `com.excelano.slipcase`, the type the desktop bundle exports. Both `slipcase` and Slipcase write and read it, so naming either would have been wrong, and the name is public surface from the release that ships it.
 
@@ -255,13 +255,13 @@ What the sandbox does not refuse is an attribute of our own. `com.excelano.slipc
 
 ### 4.12 What a reader spends before it knows what it holds
 
-SPEC §6 requires a bound on the metadata member and names no number. This is where the number is chosen and where the reason a bound belongs to the library at all is written down.
+SPEC §6 requires a bound on the flyleaf member and names no number. This is where the number is chosen and where the reason a bound belongs to the library at all is written down.
 
-**Why it is not the ZIP library's problem, which is what this said until it was measured.** A general ZIP consumer chooses what to inflate, so a limit is between it and its own caller. A reader of this format does not choose: inflating the metadata member and parsing it as TOML *is* how it discovers whether the file was a container, so the memory is spent before anything about the file is known. Measured before the bound existed: a 204,151-byte container whose metadata member deflates at a little over a thousand to one cost 620 MB resident here, 1,020 MB in `slipcase-desktop`, took 0.61 seconds, and came back conformant. At 1,019,488 bytes it was 5,019 MB and 5.1 seconds, and the desktop parses on the thread drawing the window.
+**Why it is not the ZIP library's problem, which is what this said until it was measured.** A general ZIP consumer chooses what to inflate, so a limit is between it and its own caller. A reader of this format does not choose: inflating the flyleaf member and parsing it as TOML *is* how it discovers whether the file was a container, so the memory is spent before anything about the file is known. Measured before the bound existed: a 204,151-byte container whose flyleaf member deflates at a little over a thousand to one cost 620 MB resident here, 1,020 MB in `slipcase-desktop`, took 0.61 seconds, and came back conformant. At 1,019,488 bytes it was 5,019 MB and 5.1 seconds, and the desktop parses on the thread drawing the window.
 
-**1 MiB, and why the number has to be chosen against the parsed cost.** `toml_edit` keeps a key's decor, span and representation alongside its value so a rewrite can put back what it did not touch, so the parsed document is not a small multiple of its source. Measured against the densest conformant shape — shortest legal keys, shortest legal values — 256 KiB of metadata parses to 22 MB resident and 1 MiB to 85 MB. Around 85 times, and the multiplier is a function of how many keys fit rather than of the size, so the dense shape is the one to choose the number against.
+**1 MiB, and why the number has to be chosen against the parsed cost.** `toml_edit` keeps a key's decor, span and representation alongside its value so a rewrite can put back what it did not touch, so the parsed document is not a small multiple of its source. Measured against the densest conformant shape — shortest legal keys, shortest legal values — 256 KiB of flyleaf parses to 22 MB resident and 1 MiB to 85 MB. Around 85 times, and the multiplier is a function of how many keys fit rather than of the size, so the dense shape is the one to choose the number against.
 
-The other end is what a real document needs. The two keys the format defines occupy a few dozen bytes, and SPEC §2.2 permits any keys at any depth, so a document carrying an extracted text layer or an embedded thumbnail reaches tens or hundreds of kilobytes rather than megabytes; the largest container in the conformance corpus holds 64 KiB of metadata. A megabyte is generous against every legitimate document anyone has produced and costs 85 MB against the worst one anyone can write. It is a default rather than a recommendation, which is why `Limits` exists: anything that also renders the document should set it lower — `slipcase-desktop` uses 256 KiB, having measured what a tree of that many rows costs — and a reader invoked automatically over a directory lower still.
+The other end is what a real document needs. The two keys the format defines occupy a few dozen bytes, and SPEC §2.2 permits any keys at any depth, so a document carrying an extracted text layer or an embedded thumbnail reaches tens or hundreds of kilobytes rather than megabytes; the largest container in the conformance corpus holds 64 KiB of flyleaf. A megabyte is generous against every legitimate document anyone has produced and costs 85 MB against the worst one anyone can write. It is a default rather than a recommendation, which is why `Limits` exists: anything that also renders the document should set it lower — `slipcase-desktop` uses 256 KiB, having measured what a tree of that many rows costs — and a reader invoked automatically over a directory lower still.
 
 **Undetermined and not non-conformant**, which SPEC §6 requires and is worth restating as a design constraint rather than a rule. The bound is this reader's, so exceeding it is a fact about the reader. `Verdict::NonConformant` would publish a configuration value as a property of somebody else's file, and two callers holding different `Limits` would disagree about conformance — the disagreement SPEC §3 exists to prevent. `Unsupported` already maps to `Undetermined`, so the new variant needed no plumbing.
 
@@ -271,36 +271,36 @@ The other end is what a real document needs. The two keys the format defines occ
 
 ### 4.13 A name is not safe because it is legal
 
-SPEC §2.3 excludes the C0 controls and U+007F from `payload.file` and lets everything else through, including the Unicode bidirectional formatting characters. That is deliberate on both sides: they are legal on every filesystem, a writer may hold a file that genuinely has one in its name, and putting them in the name rules would turn a rule about paths into a table of special cases. So the container is conformant and the problem is the display, which is why SPEC §3 states it as a display rule and why `display_name` is a rendering function rather than a check.
+SPEC §2.3 excludes the C0 controls and U+007F from `content.file` and lets everything else through, including the Unicode bidirectional formatting characters. That is deliberate on both sides: they are legal on every filesystem, a writer may hold a file that genuinely has one in its name, and putting them in the name rules would turn a rule about paths into a table of special cases. So the container is conformant and the problem is the display, which is why SPEC §3 states it as a display rule and why `display_name` is a rendering function rather than a check.
 
 **Escaping rather than isolating.** Wrapping the name in U+2066 and U+2069 confines the reordering to one field, and a name that reads as `report.pdf` inside its own field is still a name that reads as `report.pdf` — the field exists to say what somebody is about to open. An override with no terminator also runs to the end of the paragraph rather than the end of the string, so anything relying on containment has to emit the terminator itself and cannot trust the name to carry one.
 
-**Why `info` does not escape when it is redirected.** The verb has two jobs and they want opposite things. Into a pipe or a file it reproduces the metadata member byte for byte, which is what a caller redirecting it asked for and what escaping would ruin: they would get a document the container does not contain. Onto a terminal it is a display, and a terminal is the one place these characters are applied. Splitting on `IsTerminal` is where `ls` and `git` split for the same reason, and it costs no dependency.
+**Why `info` does not escape when it is redirected.** The verb has two jobs and they want opposite things. Into a pipe or a file it reproduces the flyleaf member byte for byte, which is what a caller redirecting it asked for and what escaping would ruin: they would get a document the container does not contain. Onto a terminal it is a display, and a terminal is the one place these characters are applied. Splitting on `IsTerminal` is where `ls` and `git` split for the same reason, and it costs no dependency.
 
 
 ## 5. The CLI
 
 Five verbs. Each does one thing the format supports.
 
-- `pack <payload> [--name <n>] [--meta <file.toml>] [-o <out.slpc>]` — writes a container. Default output is the payload's name with `.slpc` appended, per the naming convention. With no `--meta`, generates metadata carrying only the two required keys.
-- `unpack <file.slpc> [--dest <dir>] [--metadata]` — writes the payload. `--metadata` also writes `slipcase.metadata.toml`. Nothing else in the archive is written to disk, as the specification requires.
-- `repack <file.slpc> [--meta <file.toml>] [--payload <file>] [--name <n>] [-o <out.slpc>]` — changes the metadata, the payload, or both, and copies every other member through. At least one of the two, since a repack with nothing to change would read as a command that did something.
-- `info <file.slpc>` — prints the metadata. Redirected, it reproduces the member byte for byte; onto a terminal it escapes the bidirectional formatting characters, for the reason in §4.13.
+- `pack <content> [--name <n>] [--flyleaf <file.toml>] [-o <out.slpc>]` — writes a container. Default output is the content file's name with `.slpc` appended, per the naming convention. With no `--flyleaf`, generates a flyleaf carrying only the two required keys.
+- `unpack <file.slpc> [--dest <dir>] [--flyleaf]` — writes the content file. `--flyleaf` also writes `slipcase.flyleaf.toml`. Nothing else in the archive is written to disk, as the specification requires.
+- `repack <file.slpc> [--flyleaf <file.toml>] [--content file <file>] [--name <n>] [-o <out.slpc>]` — changes the flyleaf, the content file, or both, and copies every other member through. At least one of the two, since a repack with nothing to change would read as a command that did something.
+- `info <file.slpc>` — prints the flyleaf. Redirected, it reproduces the member byte for byte; onto a terminal it escapes the bidirectional formatting characters, for the reason in §4.13.
 - `validate <file.slpc>` — reports conformance. A container declaring a version this build does not implement is not reported conformant, because everything past the two required keys is a rule this version's text states and none of it was checked. That is exit 3: a refusal to answer, not a verdict on the file.
 
 Behavior that is decided rather than obvious:
 
-- **Both required keys are set for the user**, by the library rather than by the CLI: `payload.file` from the payload's own filename, `slipcase_version` from the build. §4.3. A `--meta` file that sets `payload.file` to something else is an error rather than a silent overwrite.
-- **A payload whose filename cannot be a member name is rejected, not renamed.** Packing it would produce a container that cannot name its own payload.
+- **Both required keys are set for the user**, by the library rather than by the CLI: `content.file` from the content file's own filename, `slipcase_version` from the build. §4.3. A `--flyleaf` file that sets `content.file` to something else is an error rather than a silent overwrite.
+- **A content file whose filename cannot be a member name is rejected, not renamed.** Packing it would produce a container that cannot name its own content file.
 - **`repack` exists because unpacking and packing again is not the same operation.** SPEC §3 requires that members an implementation does not recognize survive a rewrite, and unpack-then-pack discards every one of them. Without this verb the workflow the tool teaches is the one the specification forbids.
 - **`repack` writes back over the container it was given**, unless `-o` names somewhere else. A verb that named its target and then refused to touch it would send every caller through `repack -o tmp && mv tmp target`, the same operation with the atomicity taken out. `--force` is not the gate, because `--force` means "there is an unrelated file in your way": naming the container is the consent.
-- **`repack` reads back what it wrote before replacing anything.** The library validates the metadata it is about to store, so this checks the archive around it, at the cost of a central-directory read of a file already in the page cache.
+- **`repack` reads back what it wrote before replacing anything.** The library validates the flyleaf it is about to store, so this checks the archive around it, at the cost of a central-directory read of a file already in the page cache.
 - **Writing in place resolves the path first**, so a container reached through a symbolic link is replaced rather than the link. That and the permissions carried across are §4.7's: the tool chooses an in-place destination over a new one, and the library knows what each means.
 - **A file this tool creates comes out with the permissions any other new file would have**, which is also §4.7's doing. What stays in the tool is what is shaped like a command line: `-` for standard output, refusing to write a ZIP at a terminal, and the wording of the messages — the library reports that a destination exists and says nothing about `--force`, having no flags of its own.
-- **Neither `pack` nor `unpack` overwrites an existing file without `--force`.** `unpack --metadata` reserves both destinations before writing either.
-- **Exit codes:** 0 for success or conformance, 1 for bad input, 2 for a bad command line, 3 for no verdict. The first three split on whose mistake it is: 2 says re-read `--help`, 1 says go and look at the file. The fourth is against the fleet's three-code convention and is earned because the distinction is normative: a container whose metadata cannot be read, or which declares another version, is one SPEC §3 forbids calling non-conformant, and with one code for both a caller branching on the status reads it as exactly that.
-- **`-` names standard input where a file is read, and standard output where one is written.** The reading half is the fleet convention. The writing half is this tool's own, and it is what lets a container move through a pipeline: `info | edit | repack --meta -` is the shape the verb is for. Writing a container to a terminal is refused. Only one argument may be `-`, there being one standard input.
-- **Standard output is spooled to a temporary file and copied out at the end**, the mirror of what the reading verbs do with standard input. It gives repacking the seekable destination §4.4 wants, and a pipeline never receives the first half of a container that then failed. `pack -` streams without buffering but needs `--name`, there being no filename to take `payload.file` from. The reading verbs cannot stream at all — a ZIP's central directory is at its end — so `info -`, `validate -`, and `unpack -` spool and open the spool. That cost is the CLI's rather than the library's, which keeps its `Read + Seek` bound and never spools for a caller who already has a file.
+- **Neither `pack` nor `unpack` overwrites an existing file without `--force`.** `unpack --flyleaf` reserves both destinations before writing either.
+- **Exit codes:** 0 for success or conformance, 1 for bad input, 2 for a bad command line, 3 for no verdict. The first three split on whose mistake it is: 2 says re-read `--help`, 1 says go and look at the file. The fourth is against the fleet's three-code convention and is earned because the distinction is normative: a container whose flyleaf cannot be read, or which declares another version, is one SPEC §3 forbids calling non-conformant, and with one code for both a caller branching on the status reads it as exactly that.
+- **`-` names standard input where a file is read, and standard output where one is written.** The reading half is the fleet convention. The writing half is this tool's own, and it is what lets a container move through a pipeline: `info | edit | repack --flyleaf -` is the shape the verb is for. Writing a container to a terminal is refused. Only one argument may be `-`, there being one standard input.
+- **Standard output is spooled to a temporary file and copied out at the end**, the mirror of what the reading verbs do with standard input. It gives repacking the seekable destination §4.4 wants, and a pipeline never receives the first half of a container that then failed. `pack -` streams without buffering but needs `--name`, there being no filename to take `content.file` from. The reading verbs cannot stream at all — a ZIP's central directory is at its end — so `info -`, `validate -`, and `unpack -` spool and open the spool. That cost is the CLI's rather than the library's, which keeps its `Read + Seek` bound and never spools for a caller who already has a file.
 - `--version`, `-V`, `--help`, `-h`, per the fleet convention.
 
 ---
@@ -309,7 +309,7 @@ Behavior that is decided rather than obvious:
 
 Two layers.
 
-**Fixtures the tests build themselves.** Every archive the suite reads is stamped byte by byte in `tests/support`, including the ones no ordinary writer will produce: a CP437 member name, a name flagged UTF-8 that is not one, two members sharing a name, a payload declaring a compression method this build lacks. Nothing binary is committed, so nothing in the history is opaque to review, what a fixture tests is in the code that builds it, and a fixture cannot go stale against a constant it shares with the crate.
+**Fixtures the tests build themselves.** Every archive the suite reads is stamped byte by byte in `tests/support`, including the ones no ordinary writer will produce: a CP437 member name, a name flagged UTF-8 that is not one, two members sharing a name, a content file declaring a compression method this build lacks. Nothing binary is committed, so nothing in the history is opaque to review, what a fixture tests is in the code that builds it, and a fixture cannot go stale against a constant it shares with the crate.
 
 None of that is self-containment and it should not be sold as such. `cargo test` fetches this workspace's dependencies before it runs anything.
 
@@ -342,7 +342,7 @@ truncation and splicing.
 front door finds nothing and looks exactly like one that found nothing. Of two
 million cases from one seed: 1.19 M are refused as not an archive, 564 K are
 refused for something else, 202 K come out *conformant*, 386 K parse the
-metadata member, 129 K read a payload through, and 202 K survive a rewrite and
+flyleaf member, 129 K read a content file through, and 202 K survive a rewrite and
 are read back. Those numbers are the argument that a clean run means anything.
 
 **Stable, not `cargo-fuzz`.** libFuzzer wants a nightly toolchain, which is a
@@ -380,8 +380,8 @@ The corpus is built upstream rather than with this implementation: a corpus prod
 
 **Desktop integration** — an opener, a file association, an icon, a shell extension. Separate work, separate platforms, and a separate repository: `excelano/slipcase-desktop` is a graphical application over this library. It is not in this workspace because the fleet's shared CI and this repository's release pipeline are both scoped to a workspace holding one dependency-free command-line binary, and because a window is two hundred crates the library's contributors should not have to build. What it needs from the library goes into the library — §4.7 and §4.8 both arrived that way.
 
-**Key-level metadata editing from the CLI.** `repack --meta` replaces the document wholesale, which needs no syntax of its own. A `set key=value` verb would need a convention for whether `3` is an integer or a string, and inventing one here would be defining a vocabulary the format deliberately does not have. SPEC §5 leaves a vocabulary out of this version rather than out of every version, so the name stays free for one that has something to operate on.
+**Key-level flyleaf editing from the CLI.** `repack --flyleaf` replaces the document wholesale, which needs no syntax of its own. A `set key=value` verb would need a convention for whether `3` is an integer or a string, and inventing one here would be defining a vocabulary the format deliberately does not have. SPEC §5 leaves a vocabulary out of this version rather than out of every version, so the name stays free for one that has something to operate on.
 
 **Bindings for other languages.** Every other language gets a native implementation reading the same specification.
 
-**Schema validation of metadata beyond the two structural keys.** There is nothing to validate against.
+**Schema validation of flyleaf beyond the two structural keys.** There is nothing to validate against.

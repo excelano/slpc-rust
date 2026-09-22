@@ -1,9 +1,9 @@
 # slpc-rust
 
-The Rust implementation of [Slipcase](https://slipcaseformat.org), a container format that attaches metadata to a file.
+The Rust implementation of [Slipcase](https://slipcaseformat.org), a container format that binds a file to a flyleaf describing it.
 
 <!-- shared:blurb -->
-A `.slpc` file is a ZIP archive holding a payload file of any type together with a TOML metadata document describing it. The two become one file, so copying, moving, or sending the payload carries its metadata along.
+A `.slpc` file is a ZIP archive holding a content file of any type together with a TOML flyleaf document describing it. The two become one file, so copying, moving, or sending the content file carries its flyleaf along.
 <!-- /shared:blurb -->
 
 This repository is a Cargo workspace holding two crates:
@@ -55,18 +55,18 @@ winget install Excelano.slipcase-cli
 
 The identifier carries `-cli` and the command does not: what lands on the path
 is `slipcase`. `winget install slipcase` reaches Slipcase Desktop, the viewer
-and metadata editor, which is a different program that opens containers rather
+and flyleaf editor, which is a different program that opens containers rather
 than a command that makes them.
 
 ## The tool
 
 <!-- shared:verbs -->
 ```
-slipcase pack report.pdf --meta owner.toml       # writes report.pdf.slpc
-slipcase info report.pdf.slpc                    # prints the metadata; verbatim when redirected
-slipcase repack report.pdf.slpc --meta new.toml  # changes it in place, keeping the rest
-slipcase validate report.pdf.slpc                # exit 0 if conformant
-slipcase unpack report.pdf.slpc --dest ./out     # writes the payload and nothing else
+slipcase pack report.pdf --flyleaf owner.toml       # writes report.pdf.slpc
+slipcase info report.pdf.slpc                       # prints the flyleaf; verbatim when redirected
+slipcase repack report.pdf.slpc --flyleaf new.toml  # changes it in place, keeping the rest
+slipcase validate report.pdf.slpc                   # exit 0 if conformant
+slipcase unpack report.pdf.slpc --dest ./out        # writes the content file and nothing else
 ```
 <!-- /shared:verbs -->
 
