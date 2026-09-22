@@ -196,8 +196,12 @@ impl<R: Read + Seek> Container<R> {
         // under: every caller of this library wants all of this member. What it
         // is not is small, which this said until it was measured — see
         // `read_flyleaf_member`.
-        let bytes =
-            read_flyleaf_member(&mut archive, flyleaf_index, entries[flyleaf_index].size, limits)?;
+        let bytes = read_flyleaf_member(
+            &mut archive,
+            flyleaf_index,
+            entries[flyleaf_index].size,
+            limits,
+        )?;
 
         let (doc, keys) = flyleaf::parse(&bytes)?;
         let crate::flyleaf::Keys {

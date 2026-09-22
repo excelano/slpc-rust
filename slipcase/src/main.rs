@@ -357,7 +357,8 @@ fn unpack(a: Unpack) -> Result<()> {
         None
     };
 
-    std::io::copy(&mut c.content()?, content_out.writer()).context("cannot write the content file")?;
+    std::io::copy(&mut c.content()?, content_out.writer())
+        .context("cannot write the content file")?;
 
     // The flyleaf lands first, and the order is the whole point. Both
     // destinations are reserved before either is written, but reserving is a

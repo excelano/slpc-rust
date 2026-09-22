@@ -5,7 +5,7 @@
 
 mod support;
 
-use support::{container, flyleaf, open, content_of, raw_zip, Member};
+use support::{container, content_of, flyleaf, open, raw_zip, Member};
 
 use slpc::{EntryKind, Error, Malformed, NameError, Unsupported, FLYLEAF_MEMBER};
 

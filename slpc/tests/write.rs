@@ -6,7 +6,7 @@
 mod support;
 
 use std::io::{Read, Write};
-use support::{flyleaf, open, content_of, raw_zip, Member};
+use support::{content_of, flyleaf, open, raw_zip, Member};
 
 use slpc::{Error, Malformed, NameError, Unsupported, FLYLEAF_MEMBER, VERSION_KEY};
 use toml_edit::DocumentMut;

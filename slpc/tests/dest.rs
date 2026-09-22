@@ -205,7 +205,7 @@ mod permissions {
 /// Where a container's content name becomes a path, and what it is shown as.
 mod content_paths {
     use super::sandbox;
-    use slpc::{display_path, content_path};
+    use slpc::{content_path, display_path};
     use std::path::Path;
 
     /// Every name Win32 resolves to a device wherever it appears. `LPT1` and

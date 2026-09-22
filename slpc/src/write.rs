@@ -16,7 +16,7 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crate::container::{locate_content, Container};
 use crate::error::{Malformed, NameError, Result, Unsupported};
-use crate::{flyleaf, name, FLYLEAF_MEMBER, CONTENT_FILE_KEY, VERSION, VERSION_KEY};
+use crate::{flyleaf, name, CONTENT_FILE_KEY, FLYLEAF_MEMBER, VERSION, VERSION_KEY};
 
 /// Pack a content file read from a stream.
 ///

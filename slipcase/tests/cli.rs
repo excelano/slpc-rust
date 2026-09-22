@@ -589,7 +589,11 @@ fn what_it_writes_is_readable_by_whoever_the_umask_said() {
 
     std::fs::remove_file(s.path().join("a.txt")).unwrap();
     assert_eq!(code(&s.run(&["unpack", "a.txt.slpc", "--flyleaf"])), 0);
-    assert_eq!(mode(&s.path().join("a.txt")), want, "an unpacked content file");
+    assert_eq!(
+        mode(&s.path().join("a.txt")),
+        want,
+        "an unpacked content file"
+    );
     assert_eq!(
         mode(&s.path().join("slipcase.flyleaf.toml")),
         want,
@@ -821,10 +825,7 @@ fn a_refused_content_write_takes_the_flyleaf_with_it() {
     let o = s.run(&["unpack", "report.pdf.slpc", "--dest", "dest", "--flyleaf"]);
     assert_ne!(code(&o), 0, "it reports failure: {}", out(&o));
     assert!(
-        !s.path()
-            .join("dest")
-            .join("slipcase.flyleaf.toml")
-            .exists(),
+        !s.path().join("dest").join("slipcase.flyleaf.toml").exists(),
         "the flyleaf was left behind by a command that said it failed"
     );
 }
@@ -853,7 +854,14 @@ fn repack_to_standard_output_marks_no_file_called_dash() {
         "m.toml",
         b"slipcase_version = \"1.1\"\n\n[content]\nfile = \"report.pdf\"\n\nt = \"x\"\n",
     );
-    let o = s.run(&["repack", "report.pdf.slpc", "--flyleaf", "m.toml", "-o", "-"]);
+    let o = s.run(&[
+        "repack",
+        "report.pdf.slpc",
+        "--flyleaf",
+        "m.toml",
+        "-o",
+        "-",
+    ]);
     assert_eq!(code(&o), 0, "{}", err(&o));
 
     assert!(
