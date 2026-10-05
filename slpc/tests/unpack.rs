@@ -43,7 +43,10 @@ fn tree(dir: &Path) -> Vec<String> {
 /// Paths resolved to the files they name, so the verbatim form `Unpack`
 /// returns on Windows compares equal to a path built by hand.
 fn resolved(paths: &[PathBuf]) -> Vec<PathBuf> {
-    paths.iter().map(|p| std::fs::canonicalize(p).unwrap()).collect()
+    paths
+        .iter()
+        .map(|p| std::fs::canonicalize(p).unwrap())
+        .collect()
 }
 
 fn with_members(extra: Vec<Member>) -> Vec<u8> {
