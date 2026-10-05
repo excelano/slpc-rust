@@ -40,6 +40,12 @@ fn tree(dir: &Path) -> Vec<String> {
     out
 }
 
+/// Paths resolved to the files they name, so the verbatim form `Unpack`
+/// returns on Windows compares equal to a path built by hand.
+fn resolved(paths: &[PathBuf]) -> Vec<PathBuf> {
+    paths.iter().map(|p| std::fs::canonicalize(p).unwrap()).collect()
+}
+
 fn with_members(extra: Vec<Member>) -> Vec<u8> {
     let mut all = vec![
         Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
@@ -78,7 +84,7 @@ fn writes_the_content_file_and_nothing_else_by_default() {
     let s = sandbox();
     let written = unpack(&extras(), s.path(), |u| u).unwrap();
     assert_eq!(tree(s.path()), ["a.txt"]);
-    assert_eq!(written, [s.path().join("a.txt")]);
+    assert_eq!(resolved(&written), resolved(&[s.path().join("a.txt")]));
     assert_eq!(std::fs::read(s.path().join("a.txt")).unwrap(), b"content\n");
 }
 
@@ -94,12 +100,12 @@ fn writes_the_flyleaf_and_named_members() {
         ["a.txt", "records", "records/events.toml", FLYLEAF_MEMBER]
     );
     assert_eq!(
-        written,
-        [
+        resolved(&written),
+        resolved(&[
             s.path().join(FLYLEAF_MEMBER),
             s.path().join("a.txt"),
             s.path().join("records").join("events.toml"),
-        ]
+        ])
     );
     assert_eq!(
         std::fs::read(s.path().join("records/events.toml")).unwrap(),
