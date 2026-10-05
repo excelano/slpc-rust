@@ -412,8 +412,13 @@ fn unpack(a: Unpack) -> Result<()> {
             // leaving exactly the file this is here to prevent — one that
             // opens without the warning its origin earned — so it goes, and
             // the message says that it went. `Destination` takes the same line
-            // about a container it could not finish writing.
+            // about a container it could not finish writing. The flyleaf goes
+            // with it, because SPEC 3 removes everything a failed extraction
+            // created, and a flyleaf alone is the retry's next refusal.
             let removed = std::fs::remove_file(&out).is_ok();
+            if let Some(at) = &flyleaf_landed {
+                let _ = std::fs::remove_file(at);
+            }
             return Err(Failure::new(format!(
                 "cannot carry where {} came from onto its content: {e}\n                 The content {}, because opening it would not raise the \
                  warning the container would have.",
