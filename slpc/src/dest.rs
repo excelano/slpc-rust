@@ -314,9 +314,10 @@ pub(crate) fn addressable(dir: &Path) -> Result<PathBuf> {
     // on the Windows runner added one commit earlier, which is the whole
     // argument for that job in one line.
     #[cfg(windows)]
-    let dir = std::fs::canonicalize(dir)
-        .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", display_path(dir))))?;
+    return Ok(std::fs::canonicalize(dir)
+        .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", display_path(dir))))?);
 
+    #[cfg(not(windows))]
     Ok(dir.to_owned())
 }
 
