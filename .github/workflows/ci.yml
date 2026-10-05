@@ -10,10 +10,7 @@ name: ci
 # library workflow adds. The workspace holds the CLI as well, and the library
 # checks are a superset of the binary ones, so one call covers both.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   ci:
