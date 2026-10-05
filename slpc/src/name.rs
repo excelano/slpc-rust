@@ -1,4 +1,5 @@
-// Member names: what `content.file` may be.
+// Member names: what `content.file` may be, and what an additional member may
+// be written under.
 //
 // Deciding whether a member's name equals another is a different question and
 // lives in `central.rs`, with the flag that decodes it.
@@ -6,7 +7,7 @@
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
 
-use crate::error::NameError;
+use crate::error::{MemberNameError, NameError};
 use crate::FLYLEAF_MEMBER;
 
 /// Check a name against SPEC 2.3.
@@ -39,6 +40,35 @@ pub fn check_content_name(name: &str) -> Result<(), NameError> {
     }
     if name == FLYLEAF_MEMBER {
         return Err(NameError::ReservedForFlyleaf);
+    }
+    Ok(())
+}
+
+/// Check a name against SPEC 3's rule for writing an additional member.
+///
+/// Unlike a content file, an additional member may sit in a tree, so `/`
+/// separates segments rather than being refused. Each segment must be
+/// non-empty and neither `.` nor `..`, and the name must be free of `\`, `:`,
+/// and the characters U+0000 to U+001F and U+007F. SPEC 2.1 lets a container
+/// hold a member under any name; this is the rule for the names this library
+/// will write, into a container or onto disk.
+pub fn check_member_name(name: &str) -> Result<(), MemberNameError> {
+    if name.contains('\\') {
+        return Err(MemberNameError::Backslash);
+    }
+    if name.contains(':') {
+        return Err(MemberNameError::Colon);
+    }
+    if let Some(c) = name.chars().find(|c| c.is_ascii() && c.is_control()) {
+        return Err(MemberNameError::ControlCharacter(c));
+    }
+    for segment in name.split('/') {
+        if segment.is_empty() {
+            return Err(MemberNameError::EmptySegment);
+        }
+        if segment == "." || segment == ".." {
+            return Err(MemberNameError::RelativeSegment);
+        }
     }
     Ok(())
 }
@@ -270,6 +300,40 @@ mod tests {
         assert_eq!(
             check_content_name(FLYLEAF_MEMBER),
             Err(NameError::ReservedForFlyleaf)
+        );
+    }
+    #[test]
+    fn member_names_may_be_paths() {
+        assert_eq!(check_member_name("records/events.toml"), Ok(()));
+        assert_eq!(check_member_name("a/b/c"), Ok(()));
+        assert_eq!(check_member_name(".hidden/x"), Ok(()));
+    }
+
+    #[test]
+    fn rejects_each_clause_of_the_member_rule() {
+        for name in ["", "/a", "a/", "a//b"] {
+            assert_eq!(
+                check_member_name(name),
+                Err(MemberNameError::EmptySegment),
+                "{name:?}"
+            );
+        }
+        for name in [".", "..", "../a", "a/./b", "a/.."] {
+            assert_eq!(
+                check_member_name(name),
+                Err(MemberNameError::RelativeSegment),
+                "{name:?}"
+            );
+        }
+        assert_eq!(check_member_name("a\\b"), Err(MemberNameError::Backslash));
+        assert_eq!(check_member_name("C:a"), Err(MemberNameError::Colon));
+        assert_eq!(
+            check_member_name("a\u{7f}"),
+            Err(MemberNameError::ControlCharacter('\u{7f}'))
+        );
+        assert_eq!(
+            check_member_name("a\nb"),
+            Err(MemberNameError::ControlCharacter('\n'))
         );
     }
 }

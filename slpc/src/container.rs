@@ -9,7 +9,7 @@ use std::path::Path;
 use toml_edit::DocumentMut;
 use zip::ZipArchive;
 
-use crate::error::{EntryKind, Error, Malformed, Result, Unsupported};
+use crate::error::{EntryKind, Error, Malformed, MemberError, Result, Unsupported};
 use crate::{central, flyleaf, name, Limits, FLYLEAF_MEMBER, VERSION};
 
 /// One member of the central directory, as far as this library cares.
@@ -20,7 +20,7 @@ use crate::{central, flyleaf, name, Limits, FLYLEAF_MEMBER, VERSION};
 /// through in the order they arrived.
 pub(crate) struct Entry {
     raw: Vec<u8>,
-    kind: EntryKind,
+    pub(crate) kind: EntryKind,
     /// The member's uncompressed length, kept from the same pass that read the
     /// name and the kind. It is eight bytes per member against a lookup that
     /// would otherwise need the archive, and needing the archive is what would
@@ -32,12 +32,12 @@ pub(crate) struct Entry {
     /// asking need `&mut`.
     crc: u32,
     /// Whether general purpose bit 0 is set on the member.
-    encrypted: bool,
+    pub(crate) encrypted: bool,
     /// The compression method's number, when it is one this build carries no
     /// decoder for, and `None` for every method it can decode. Kept for the
     /// same reason as `size`: the answer is in the central directory, and going
     /// back to the archive for it is what would need `&mut`.
-    unsupported_method: Option<u16>,
+    pub(crate) unsupported_method: Option<u16>,
 }
 
 /// Collect what the central directory says about every member, in one pass.
@@ -459,6 +459,47 @@ impl<R: Read + Seek> Container<R> {
         let i = self
             .content_index
             .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
+        Ok(self.archive.by_index(i)?)
+    }
+
+    /// A member, found by name, as a stream.
+    ///
+    /// For additional members, whose meaning belongs to whatever wrote them: a
+    /// profile's member under its own prefix, an attachment, a log. The name is
+    /// matched against every central directory entry as SPEC 2.1 decodes and
+    /// compares names, so a name two members share is refused rather than
+    /// resolved to whichever comes first. Streamed and never buffered, for the
+    /// reason [`Container::content`] is.
+    ///
+    /// # Errors
+    ///
+    /// [`MemberError::Missing`], [`MemberError::Ambiguous`], or
+    /// [`MemberError::NotARegularFile`] where the name does not identify one
+    /// regular file entry. [`Unsupported`] where the container declares a
+    /// version this build does not implement, or the member is encrypted or
+    /// compressed with a method this build lacks.
+    pub fn member(&mut self, name: &str) -> Result<impl Read + '_> {
+        if !self.version_is_recognised() {
+            return Err(Unsupported::Version(self.version.clone()).into());
+        }
+        let i = match locate(&self.entries, &self.names, name) {
+            Located::One(i) => i,
+            Located::None => return Err(MemberError::Missing(name.to_owned()).into()),
+            Located::Several(count) => {
+                return Err(MemberError::Ambiguous {
+                    name: name.to_owned(),
+                    count,
+                }
+                .into())
+            }
+        };
+        if self.entries[i].kind != EntryKind::Regular {
+            return Err(MemberError::NotARegularFile {
+                name: name.to_owned(),
+                kind: self.entries[i].kind,
+            }
+            .into());
+        }
         Ok(self.archive.by_index(i)?)
     }
 }

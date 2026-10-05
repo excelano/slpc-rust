@@ -8,7 +8,10 @@ mod support;
 use std::io::{Read, Write};
 use support::{content_of, flyleaf, open, raw_zip, Member};
 
-use slpc::{Error, Malformed, NameError, Unsupported, FLYLEAF_MEMBER, VERSION_KEY};
+use slpc::{
+    Error, Malformed, MemberError, MemberNameError, NameError, Unsupported, FLYLEAF_MEMBER,
+    VERSION_KEY,
+};
 use toml_edit::DocumentMut;
 
 /// A sink that is only a `Write`, to hold the writer bound honest.
@@ -825,5 +828,249 @@ fn repacking_leaves_no_member_promising_a_data_descriptor() {
             f.compressed_size(),
             "{name}: the local header disagrees with the central directory"
         );
+    }
+}
+
+// --- Additional members ----------------------------------------------------
+
+/// Each member's name, stored bytes, and compression method.
+fn stored(bytes: &[u8]) -> Vec<(String, Vec<u8>, zip::CompressionMethod)> {
+    let mut a = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
+    (0..a.len())
+        .map(|i| {
+            let mut f = a.by_index_raw(i).unwrap();
+            let mut raw = Vec::new();
+            f.read_to_end(&mut raw).unwrap();
+            (f.name().to_owned(), raw, f.compression())
+        })
+        .collect()
+}
+
+fn member_of(bytes: &[u8], name: &str) -> Vec<u8> {
+    let mut c = open(bytes).unwrap();
+    let mut got = Vec::new();
+    c.member(name).unwrap().read_to_end(&mut got).unwrap();
+    got
+}
+
+fn repack_err(r: slpc::Repack<'_, std::io::Cursor<Vec<u8>>>) -> Error {
+    let mut out = Seekable::default();
+    let e = r.write(&mut out).unwrap_err();
+    assert!(
+        out.bytes().is_empty(),
+        "a refused repack wrote {} bytes",
+        out.bytes().len()
+    );
+    e
+}
+
+fn source() -> std::io::Cursor<Vec<u8>> {
+    std::io::Cursor::new(source_with_extras())
+}
+
+#[test]
+fn repacking_adds_a_member_after_the_others() {
+    let src = source_with_extras();
+    let mut out = Seekable::default();
+    slpc::Repack::new(std::io::Cursor::new(src.clone()))
+        .member("records/events.toml", pipe(b"[[event]]\nseq = 1\n"))
+        .write(&mut out)
+        .unwrap();
+
+    assert_eq!(
+        member_of(out.bytes(), "records/events.toml"),
+        b"[[event]]\nseq = 1\n"
+    );
+    let after = stored(out.bytes());
+    assert_eq!(
+        after[..4],
+        stored(&src)[..],
+        "the existing members came through as stored"
+    );
+    assert_eq!(after[4].0, "records/events.toml");
+    assert!(slpc::validate(std::io::Cursor::new(out.bytes().to_vec()))
+        .unwrap()
+        .is_conformant());
+}
+
+#[test]
+fn repacking_replaces_a_member_where_it_sat() {
+    let src = source_with_extras();
+    let mut out = Seekable::default();
+    slpc::Repack::new(std::io::Cursor::new(src.clone()))
+        .member("notes.md", pipe(b"revised notes\n"))
+        .write(&mut out)
+        .unwrap();
+
+    assert_eq!(member_of(out.bytes(), "notes.md"), b"revised notes\n");
+    let (before, after) = (stored(&src), stored(out.bytes()));
+    let names: Vec<&str> = after.iter().map(|(n, _, _)| n.as_str()).collect();
+    assert_eq!(names, [FLYLEAF_MEMBER, "a.txt", "notes.md", "opaque.bin"]);
+    for i in [0, 1, 3] {
+        assert_eq!(after[i], before[i], "{} changed", before[i].0);
+    }
+}
+
+#[test]
+fn repacking_removes_a_member() {
+    let src = source_with_extras();
+    let mut out = Seekable::default();
+    slpc::Repack::new(std::io::Cursor::new(src.clone()))
+        .remove_member("notes.md")
+        .write(&mut out)
+        .unwrap();
+
+    let before = stored(&src);
+    assert_eq!(
+        stored(out.bytes()),
+        [before[0].clone(), before[1].clone(), before[3].clone()]
+    );
+}
+
+#[test]
+fn a_member_set_is_read_back_exactly() {
+    let odd: Vec<u8> = b"seq=1\r\n\t# trailing  \n\xff\x00".to_vec();
+    let mut out = Seekable::default();
+    slpc::Repack::new(source())
+        .member("records/events.toml", pipe(&odd))
+        .write(&mut out)
+        .unwrap();
+    assert_eq!(member_of(out.bytes(), "records/events.toml"), odd);
+}
+
+#[test]
+fn repacking_changes_content_and_members_at_once() {
+    let mut out = Seekable::default();
+    slpc::Repack::new(source())
+        .content("b.txt", pipe(b"revised\n"))
+        .member("records/events.toml", pipe(b"x"))
+        .remove_member("notes.md")
+        .write(&mut out)
+        .unwrap();
+
+    let mut c = open(out.bytes()).unwrap();
+    assert_eq!(c.content_name(), "b.txt");
+    assert_eq!(content_of(&mut c), b"revised\n");
+    let names: Vec<String> = members(out.bytes()).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(
+        names,
+        [FLYLEAF_MEMBER, "b.txt", "opaque.bin", "records/events.toml"]
+    );
+}
+
+#[test]
+fn repacking_refuses_to_remove_a_member_that_is_not_there() {
+    match repack_err(slpc::Repack::new(source()).remove_member("missing.md")) {
+        Error::Member(MemberError::Missing(n)) => assert_eq!(n, "missing.md"),
+        other => panic!("expected Missing, got {other:?}"),
+    }
+}
+
+#[test]
+fn repacking_refuses_a_member_name_two_members_share() {
+    let src = raw_zip(&[
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
+        Member::new("a.txt", b"x"),
+        Member::new("notes.md", b"first"),
+        Member::new("notes.md", b"second"),
+    ]);
+    for r in [
+        slpc::Repack::new(std::io::Cursor::new(src.clone())).member("notes.md", pipe(b"y")),
+        slpc::Repack::new(std::io::Cursor::new(src.clone())).remove_member("notes.md"),
+    ] {
+        match repack_err(r) {
+            Error::Member(MemberError::Ambiguous { name, count }) => {
+                assert_eq!((name.as_str(), count), ("notes.md", 2));
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn repacking_refuses_the_flyleaf_and_the_content_as_members() {
+    let reserved = |e: Error, want: &str| match e {
+        Error::Member(MemberError::Reserved(n)) => assert_eq!(n, want),
+        other => panic!("{want}: expected Reserved, got {other:?}"),
+    };
+    reserved(
+        repack_err(slpc::Repack::new(source()).member(FLYLEAF_MEMBER, pipe(b"x"))),
+        FLYLEAF_MEMBER,
+    );
+    reserved(
+        repack_err(slpc::Repack::new(source()).member("a.txt", pipe(b"x"))),
+        "a.txt",
+    );
+    reserved(
+        repack_err(slpc::Repack::new(source()).remove_member("a.txt")),
+        "a.txt",
+    );
+    reserved(
+        repack_err(
+            slpc::Repack::new(source())
+                .content("b.txt", pipe(b"x"))
+                .member("b.txt", pipe(b"y")),
+        ),
+        "b.txt",
+    );
+    reserved(
+        repack_err(
+            slpc::Repack::new(source())
+                .content("b.txt", pipe(b"x"))
+                .member("a.txt", pipe(b"y")),
+        ),
+        "a.txt",
+    );
+}
+
+#[test]
+fn repacking_refuses_to_remove_the_member_a_new_flyleaf_points_at() {
+    let d = doc("slipcase_version = \"1.1\"\n\n[content]\nfile = \"notes.md\"\n");
+    match repack_err(
+        slpc::Repack::new(source())
+            .flyleaf(&d)
+            .remove_member("notes.md"),
+    ) {
+        Error::Member(MemberError::Reserved(n)) => assert_eq!(n, "notes.md"),
+        other => panic!("expected Reserved, got {other:?}"),
+    }
+}
+
+#[test]
+fn repacking_refuses_a_member_name_the_rule_forbids() {
+    for (name, cause) in [
+        ("../escape", MemberNameError::RelativeSegment),
+        ("/rooted", MemberNameError::EmptySegment),
+        ("dir/", MemberNameError::EmptySegment),
+        ("a\\b", MemberNameError::Backslash),
+        ("C:x", MemberNameError::Colon),
+    ] {
+        match repack_err(slpc::Repack::new(source()).member(name, pipe(b"x"))) {
+            Error::Member(MemberError::Name { name: n, cause: c }) => {
+                assert_eq!(n, name);
+                assert_eq!(c, cause);
+            }
+            other => panic!("{name:?}: expected Name, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn repacking_refuses_a_member_named_twice() {
+    for r in [
+        slpc::Repack::new(source())
+            .member("x", pipe(b"1"))
+            .member("x", pipe(b"2")),
+        slpc::Repack::new(source())
+            .member("notes.md", pipe(b"1"))
+            .remove_member("notes.md"),
+        slpc::Repack::new(source())
+            .remove_member("notes.md")
+            .remove_member("notes.md"),
+    ] {
+        assert!(matches!(
+            repack_err(r),
+            Error::Member(MemberError::RequestedTwice(_))
+        ));
     }
 }

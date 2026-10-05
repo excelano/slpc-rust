@@ -14,8 +14,8 @@ use toml_edit::DocumentMut;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use crate::container::{locate_content, Container};
-use crate::error::{Malformed, NameError, Result, Unsupported};
+use crate::container::{locate, locate_content, Container, Located};
+use crate::error::{Malformed, MemberError, NameError, Result, Unsupported};
 use crate::{flyleaf, name, CONTENT_FILE_KEY, FLYLEAF_MEMBER, VERSION, VERSION_KEY};
 
 /// Pack a content file read from a stream.
@@ -68,7 +68,8 @@ where
 
 /// Change a container, keeping everything that is not being changed.
 ///
-/// The flyleaf, the content file, or both. Every other member is copied through as
+/// The flyleaf, the content file, additional members, or any of them together.
+/// Every member not named is copied through as
 /// stored bytes, in the order it arrived in, which is what SPEC 3 requires of
 /// an implementation rewriting a container. Nothing is decompressed and nothing
 /// is recompressed, so a container survives this whether or not the build can
@@ -109,6 +110,8 @@ pub struct Repack<'a, R> {
     source: R,
     flyleaf: Option<NewFlyleaf<'a>>,
     content: Option<(String, Box<dyn Read + 'a>)>,
+    members: Vec<(String, Box<dyn Read + 'a>)>,
+    removed: Vec<String>,
 }
 
 /// A document is edited where it has to be; bytes are stored as handed in.
@@ -129,6 +132,8 @@ impl<'a, R: Read + Seek> Repack<'a, R> {
             source,
             flyleaf: None,
             content: None,
+            members: Vec::new(),
+            removed: Vec::new(),
         }
     }
 
@@ -186,6 +191,31 @@ impl<'a, R: Read + Seek> Repack<'a, R> {
         Ok(self)
     }
 
+    /// Set an additional member to a stream, stored under `name`.
+    ///
+    /// Replaces the member already carrying the name, in the place it sat, or
+    /// adds one after every existing member where none does. The bytes are
+    /// stored as read, so a caller hashing a member gets back what it wrote.
+    ///
+    /// The name has to pass [`check_member_name`](crate::check_member_name),
+    /// may not be the flyleaf's or the content file's, and may not be carried
+    /// by more than one member of the source.
+    #[must_use]
+    pub fn member(mut self, name: &str, content: impl Read + 'a) -> Self {
+        self.members.push((name.to_owned(), Box::new(content)));
+        self
+    }
+
+    /// Leave an additional member out of the container being written.
+    ///
+    /// The member has to exist, under a name no other member carries. The
+    /// flyleaf and the content file cannot be removed.
+    #[must_use]
+    pub fn remove_member(mut self, name: &str) -> Self {
+        self.removed.push(name.to_owned());
+        self
+    }
+
     /// Write the container out.
     ///
     /// **The library validates what it is about to write.** Valid TOML, UTF-8,
@@ -202,6 +232,8 @@ impl<'a, R: Read + Seek> Repack<'a, R> {
             source,
             flyleaf,
             mut content,
+            mut members,
+            removed,
         } = self;
 
         let mut c = Container::read(source)?;
@@ -236,8 +268,12 @@ impl<'a, R: Read + Seek> Repack<'a, R> {
             (None, _) => None,
         };
 
+        let mut described = content_name.map(str::to_owned);
         if let Some(bytes) = &new_flyleaf {
             let (_, keys) = flyleaf::parse(bytes)?;
+            if described.is_none() {
+                described = Some(keys.content_file.clone());
+            }
             if keys.version != VERSION {
                 return Err(Malformed::Disagrees {
                     key: VERSION_KEY,
@@ -271,6 +307,14 @@ impl<'a, R: Read + Seek> Repack<'a, R> {
             }
         }
 
+        let reserved = [
+            FLYLEAF_MEMBER,
+            c.content_name(),
+            described.as_deref().unwrap_or(c.content_name()),
+        ];
+        let set: Vec<&str> = members.iter().map(|(n, _)| n.as_str()).collect();
+        let plan = plan_members(&c, &set, &removed, &reserved)?;
+
         let content_at = if content.is_some() {
             c.content_index
         } else {
@@ -278,7 +322,7 @@ impl<'a, R: Read + Seek> Repack<'a, R> {
         };
 
         let mut w = ZipWriter::new(out);
-        for i in 0..c.entries.len() {
+        for i in (0..c.entries.len()).filter(|i| !plan.removed.contains(i)) {
             // A second member named `slipcase.flyleaf.toml` is copied rather
             // than substituted or dropped. SPEC 3 says members this library
             // does not recognize survive a rewrite, and the result still reads
@@ -295,13 +339,86 @@ impl<'a, R: Read + Seek> Repack<'a, R> {
             } else if let Some((name, data)) = content.as_mut().filter(|_| Some(i) == content_at) {
                 w.start_file(name.as_str(), options())?;
                 std::io::copy(data, &mut w)?;
+            } else if let Some(&k) = plan.replaced.get(&i) {
+                let (name, data) = &mut members[k];
+                w.start_file(name.as_str(), options())?;
+                std::io::copy(data, &mut w)?;
             } else {
                 w.raw_copy_file(c.archive.by_index_raw(i)?)?;
             }
         }
+        for k in plan.added {
+            let (name, data) = &mut members[k];
+            w.start_file(name.as_str(), options())?;
+            std::io::copy(data, &mut w)?;
+        }
         w.finish()?.flush()?;
         Ok(())
     }
+}
+
+/// Source member index to request index for each replacement; source indices
+/// left out; request indices of members the source does not hold.
+struct MemberPlan {
+    replaced: std::collections::HashMap<usize, usize>,
+    removed: std::collections::HashSet<usize>,
+    added: Vec<usize>,
+}
+
+fn plan_members<R: Read + Seek>(
+    c: &Container<R>,
+    set: &[&str],
+    removed: &[String],
+    reserved: &[&str],
+) -> Result<MemberPlan> {
+    let mut seen = std::collections::HashSet::new();
+    for name in set
+        .iter()
+        .copied()
+        .chain(removed.iter().map(String::as_str))
+    {
+        if !seen.insert(name) {
+            return Err(MemberError::RequestedTwice(name.to_owned()).into());
+        }
+        if reserved.contains(&name) {
+            return Err(MemberError::Reserved(name.to_owned()).into());
+        }
+    }
+
+    let find = |name: &str| -> Result<Option<usize>> {
+        match locate(&c.entries, &c.names, name) {
+            Located::One(i) => Ok(Some(i)),
+            Located::None => Ok(None),
+            Located::Several(count) => Err(MemberError::Ambiguous {
+                name: name.to_owned(),
+                count,
+            }
+            .into()),
+        }
+    };
+
+    let mut plan = MemberPlan {
+        replaced: std::collections::HashMap::new(),
+        removed: std::collections::HashSet::new(),
+        added: Vec::new(),
+    };
+    for (k, &name) in set.iter().enumerate() {
+        name::check_member_name(name).map_err(|cause| MemberError::Name {
+            name: name.to_owned(),
+            cause,
+        })?;
+        match find(name)? {
+            Some(i) => {
+                plan.replaced.insert(i, k);
+            }
+            None => plan.added.push(k),
+        }
+    }
+    for name in removed {
+        let i = find(name)?.ok_or_else(|| MemberError::Missing(name.clone()))?;
+        plan.removed.insert(i);
+    }
+    Ok(plan)
 }
 
 /// Replace a container's flyleaf, preserving everything else.

@@ -7,7 +7,7 @@ mod support;
 
 use support::{container, content_of, flyleaf, open, raw_zip, Member};
 
-use slpc::{EntryKind, Error, Malformed, NameError, Unsupported, FLYLEAF_MEMBER};
+use slpc::{EntryKind, Error, Malformed, MemberError, NameError, Unsupported, FLYLEAF_MEMBER};
 
 #[test]
 fn reads_a_container() {
@@ -1171,4 +1171,125 @@ fn ordinary_extra_fields_are_not_refused() {
 
     let verdict = slpc::validate(std::io::Cursor::new(raw_zip(&[meta, content]))).unwrap();
     assert!(verdict.is_conformant(), "{verdict}");
+}
+
+// --- Additional members ----------------------------------------------------
+
+fn member_bytes(
+    c: &mut slpc::Container<std::io::Cursor<Vec<u8>>>,
+    name: &str,
+) -> slpc::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut got = Vec::new();
+    c.member(name)?.read_to_end(&mut got)?;
+    Ok(got)
+}
+
+fn with_members(extra: Vec<Member>) -> Vec<u8> {
+    let mut all = vec![
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
+        Member::new("a.txt", b"content\n"),
+    ];
+    all.extend(extra);
+    raw_zip(&all)
+}
+
+#[test]
+fn reads_a_member_by_name() {
+    let bytes = with_members(vec![Member::new(
+        "records/events.toml",
+        b"[[event]]\nseq = 1\n",
+    )]);
+    let mut c = open(&bytes).unwrap();
+    assert_eq!(
+        member_bytes(&mut c, "records/events.toml").unwrap(),
+        b"[[event]]\nseq = 1\n"
+    );
+}
+
+#[test]
+fn reads_a_member_named_in_cp437() {
+    let bytes = with_members(vec![Member::named_raw(b"caf\x87.txt", b"cp437\n")]);
+    let mut c = open(&bytes).unwrap();
+    assert_eq!(member_bytes(&mut c, "caf\u{e7}.txt").unwrap(), b"cp437\n");
+}
+
+#[test]
+fn refuses_a_member_that_is_not_there() {
+    let mut c = open(&with_members(vec![])).unwrap();
+    match member_bytes(&mut c, "notes.md").unwrap_err() {
+        Error::Member(MemberError::Missing(n)) => assert_eq!(n, "notes.md"),
+        other => panic!("expected Missing, got {other:?}"),
+    }
+}
+
+#[test]
+fn refuses_a_member_name_two_members_share() {
+    let bytes = with_members(vec![
+        Member::new("notes.md", b"first\n"),
+        Member::new("notes.md", b"second\n"),
+    ]);
+    assert!(slpc::validate(std::io::Cursor::new(bytes.clone()))
+        .unwrap()
+        .is_conformant());
+    let mut c = open(&bytes).unwrap();
+    match member_bytes(&mut c, "notes.md").unwrap_err() {
+        Error::Member(MemberError::Ambiguous { name, count }) => {
+            assert_eq!(name, "notes.md");
+            assert_eq!(count, 2);
+        }
+        other => panic!("expected Ambiguous, got {other:?}"),
+    }
+}
+
+#[test]
+fn refuses_a_member_that_is_not_a_regular_file() {
+    let bytes = with_members(vec![
+        Member::new("dir/", b"").with_mode(0o040_755),
+        Member::new("link", b"a.txt").symlink(),
+    ]);
+    let mut c = open(&bytes).unwrap();
+    for (name, kind) in [("dir/", EntryKind::Directory), ("link", EntryKind::Symlink)] {
+        match member_bytes(&mut c, name).unwrap_err() {
+            Error::Member(MemberError::NotARegularFile { name: n, kind: k }) => {
+                assert_eq!(n, name);
+                assert_eq!(k, kind);
+            }
+            other => panic!("{name}: expected NotARegularFile, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_member_this_build_cannot_decode_is_unsupported() {
+    let bytes = with_members(vec![
+        Member::new("sealed.bin", b"ciphertext").encrypted(),
+        Member::new("opaque.bin", b"pretend this is bzip2").claims_method(12),
+    ]);
+    let mut c = open(&bytes).unwrap();
+    assert!(matches!(
+        member_bytes(&mut c, "sealed.bin").unwrap_err(),
+        Error::Unsupported(Unsupported::Encrypted)
+    ));
+    assert!(matches!(
+        member_bytes(&mut c, "opaque.bin").unwrap_err(),
+        Error::Unsupported(Unsupported::Compression(12))
+    ));
+}
+
+#[test]
+fn reads_no_member_of_a_version_it_does_not_implement() {
+    let bytes = raw_zip(&[
+        Member::new(
+            FLYLEAF_MEMBER,
+            b"slipcase_version = \"9.4\"\n\n[content]\nfile = \"a.txt\"\n",
+        ),
+        Member::new("a.txt", b"x"),
+        Member::new("notes.md", b"y"),
+    ]);
+    let mut c = open(&bytes).unwrap();
+    match member_bytes(&mut c, "notes.md").unwrap_err() {
+        Error::Unsupported(Unsupported::Version(v)) => assert_eq!(v, "9.4"),
+        other => panic!("expected Unsupported::Version, got {other:?}"),
+    }
 }

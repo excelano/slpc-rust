@@ -19,6 +19,8 @@ mod limits;
 mod name;
 #[cfg(feature = "provenance")]
 pub mod provenance;
+#[cfg(feature = "fs")]
+mod unpack;
 mod write;
 
 /// The TOML implementation this crate is built on, re-exported.
@@ -31,9 +33,13 @@ pub use toml_edit;
 pub use container::{flyleaf_of, flyleaf_of_with, Container};
 #[cfg(feature = "fs")]
 pub use dest::{content_path, display_path, Destination};
-pub use error::{EntryKind, Error, Malformed, NameError, Result, Unsupported};
+pub use error::{
+    EntryKind, Error, Malformed, MemberError, MemberNameError, NameError, Result, Unsupported,
+};
 pub use limits::Limits;
-pub use name::{check_content_name, display_name};
+pub use name::{check_content_name, check_member_name, display_name};
+#[cfg(feature = "fs")]
+pub use unpack::Unpack;
 pub use write::{pack_file, pack_reader, rewrite_flyleaf, rewrite_flyleaf_bytes, Repack};
 
 /// The archive member holding the flyleaf (SPEC 2.1).

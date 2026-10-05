@@ -1,4 +1,4 @@
-// What can go wrong, in the three families DESIGN.md 4.5 describes.
+// What can go wrong, in the four families DESIGN.md 4.5 describes.
 //
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
@@ -38,6 +38,126 @@ impl fmt::Display for NameError {
             Self::ControlCharacter(c) => write!(f, "content.file contains U+{:04X}, a control character (SPEC 2.3)", *c as u32),
             Self::ReservedForFlyleaf => write!(f, "content.file is {:?}, which names the flyleaf member (SPEC 2.3)", crate::FLYLEAF_MEMBER),
             Self::NotUtf8 => f.write_str("the name is not UTF-8, and content.file is a TOML string (SPEC 2.2)"),
+        }
+    }
+}
+
+/// Why a name is not one an additional member may be written under (SPEC 3).
+///
+/// Each variant is one clause of the rule SPEC 3 sets for writing a member
+/// other than the content file and the flyleaf.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MemberNameError {
+    /// A segment between `/` separators is empty, including a leading or
+    /// trailing `/`.
+    EmptySegment,
+    /// A segment is `.` or `..`.
+    RelativeSegment,
+    /// The name contains `\`.
+    Backslash,
+    /// The name contains a colon, which some platforms read as rooting a path.
+    Colon,
+    /// The name contains a character in U+0000 to U+001F, or U+007F.
+    ControlCharacter(char),
+    /// The name is flagged UTF-8 and its bytes are not, so it has no decoding
+    /// under SPEC 2.1.
+    Undecodable,
+}
+
+impl fmt::Display for MemberNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptySegment => {
+                f.write_str("it has an empty segment between separators (SPEC 3)")
+            }
+            Self::RelativeSegment => f.write_str("it has a segment that is `.` or `..` (SPEC 3)"),
+            Self::Backslash => f.write_str("it contains '\\' (SPEC 3)"),
+            Self::Colon => f.write_str(
+                "it contains ':', which is read as rooting a path on some platforms (SPEC 3)",
+            ),
+            Self::ControlCharacter(c) => write!(
+                f,
+                "it contains U+{:04X}, a control character (SPEC 3)",
+                *c as u32
+            ),
+            Self::Undecodable => {
+                f.write_str("it is flagged UTF-8 and is not, so it has no decoding (SPEC 2.1)")
+            }
+        }
+    }
+}
+
+/// Why a request naming an additional member cannot be carried out.
+///
+/// The container itself is not at fault: SPEC 2.1 allows additional members
+/// under any names, duplicates included. What fails is the request.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum MemberError {
+    /// No member carries the name.
+    Missing(String),
+    /// More than one member carries the name, so which one was meant would
+    /// depend on the order they sit in (SPEC 3).
+    Ambiguous {
+        /// The name they share.
+        name: String,
+        /// How many members carry it.
+        count: usize,
+    },
+    /// The member is not a regular file entry.
+    NotARegularFile {
+        /// The member asked for.
+        name: String,
+        /// What the archive says the entry is.
+        kind: EntryKind,
+    },
+    /// The name is the flyleaf member's or the content file's, which are
+    /// written through [`Repack::flyleaf`](crate::Repack::flyleaf) and
+    /// [`Repack::content`](crate::Repack::content).
+    Reserved(String),
+    /// The name is not one a member may be written under.
+    Name {
+        /// The name asked for.
+        name: String,
+        /// Which rule it breaks.
+        cause: MemberNameError,
+    },
+    /// One request sets or removes the same member twice.
+    RequestedTwice(String),
+    /// Extraction would write a file at a path another member needs to be a
+    /// directory (SPEC 3).
+    DirectoryClash {
+        /// The member that would be written as a file.
+        file: String,
+        /// The member whose name passes through it.
+        under: String,
+    },
+}
+
+impl fmt::Display for MemberError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Missing(n) => write!(f, "the container has no member named {n:?}"),
+            Self::Ambiguous { name, count } => write!(
+                f,
+                "{count} members are named {name:?}, so which one is meant cannot be told (SPEC 3)"
+            ),
+            Self::NotARegularFile { name, kind } => {
+                write!(f, "the member {name:?} is {kind} rather than a regular file entry")
+            }
+            Self::Reserved(n) => write!(
+                f,
+                "{n:?} is the flyleaf or the content file, which are not written as additional members"
+            ),
+            Self::Name { name, cause } => {
+                write!(f, "{name:?} cannot be a member's name: {cause}")
+            }
+            Self::RequestedTwice(n) => write!(f, "the member {n:?} is named twice in one request"),
+            Self::DirectoryClash { file, under } => write!(
+                f,
+                "{file:?} would be written as a file, and {under:?} needs it to be a directory (SPEC 3)"
+            ),
         }
     }
 }
@@ -252,6 +372,8 @@ pub enum Error {
     Malformed(Malformed),
     /// This is or may be a conformant container, and this build cannot handle it.
     Unsupported(Unsupported),
+    /// A request naming an additional member cannot be carried out.
+    Member(MemberError),
 }
 
 impl fmt::Display for Error {
@@ -260,6 +382,7 @@ impl fmt::Display for Error {
             Self::Io(e) => write!(f, "i/o error: {e}"),
             Self::Malformed(e) => e.fmt(f),
             Self::Unsupported(e) => e.fmt(f),
+            Self::Member(e) => e.fmt(f),
         }
     }
 }
@@ -268,7 +391,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            Self::Malformed(_) | Self::Unsupported(_) => None,
+            Self::Malformed(_) | Self::Unsupported(_) | Self::Member(_) => None,
         }
     }
 }
@@ -291,6 +414,12 @@ impl From<NameError> for Error {
     }
 }
 
+impl From<MemberError> for Error {
+    fn from(e: MemberError) -> Self {
+        Self::Member(e)
+    }
+}
+
 impl From<Unsupported> for Error {
     fn from(e: Unsupported) -> Self {
         Self::Unsupported(e)
@@ -298,7 +427,7 @@ impl From<Unsupported> for Error {
 }
 
 impl From<zip::result::ZipError> for Error {
-    /// Sort the ZIP crate's one error type into the three families.
+    /// Sort the ZIP crate's one error type into the families of DESIGN.md 4.5.
     ///
     /// The split that matters is `UnsupportedArchive`, which covers both an
     /// encrypted member and whatever else the crate declines to read. Both are

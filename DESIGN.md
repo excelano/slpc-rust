@@ -78,6 +78,7 @@ c.flyleaf_bytes();   // &[u8] — the flyleaf member as stored, byte for byte
 c.content_size()?;    // u64 — uncompressed, read off the central directory
 c.check_content_readable()?;  // -> Result<(), Unsupported> — can this build decode it
 let mut r = c.content()?;   // impl Read — streams, never buffered whole
+let mut m = c.member("records/events.toml")?;   // an additional member, by name. §4.14
 
 slpc::flyleaf_of(reader)?;   // -> DocumentMut — the document, no verdict attached
 
@@ -90,6 +91,8 @@ slpc::validate(reader)?;   // -> Verdict
 slpc::Repack::new(reader)          // change a container that already exists
     .flyleaf(&document)           // also: .flyleaf_bytes(&bytes)
     .content(name, reader)         // also: .content_file(&path)
+    .member(name, reader)          // add or replace an additional member. §4.14
+    .remove_member(name)
     .write(writer)?;
 
 // With the `fs` feature. §4.7.
@@ -97,6 +100,12 @@ let mut out = slpc::Destination::new(&path, force)?;   // also: ::in_place(&path
 slpc::pack_file(&content_path, flyleaf, out.writer())?;
 slpc::validate(out.written()?)?;   // read back before anything is replaced
 out.commit()?;
+
+slpc::Unpack::new(&dir)             // extraction, as one unit. §4.14
+    .flyleaf()
+    .member(name)                   // also: .all_members()
+    .carry_from(&container_path)
+    .write(&mut c)?;
 ```
 
 The container is `mut` because the archive lends out one member at a time, which is the ZIP crate's shape rather than a choice made here.
@@ -150,6 +159,7 @@ The defect behind it is invisible from inside: `zip` 8.6 sets the data descripto
 - **I/O** — the file could not be read or written.
 - **Malformed** — this is not a conformant container. Each variant names the rule it violates, so the message can point at a specification clause.
 - **Unsupported** — this is or may be a conformant container, and this build cannot handle it. An encrypted member, a compression method the crate does not implement, a `slipcase_version` this build does not recognize.
+- **Member** — the container is fine, and a request naming an additional member cannot be carried out: the name is missing, shared by several members, not a regular file entry, reserved, or not one a member may be written under. SPEC §2.1 lets additional members carry any names, duplicates included, so none of this is a verdict on the file.
 
 **Validation returns a verdict rather than a yes or no.** Four answers, because two will not do: conformant, non-conformant with the rule it breaks, undetermined when the flyleaf member cannot be read at all, and out of scope when the container declares a version this build does not implement. SPEC §3 forbids reporting a container as conformant *or* as non-conformant when its flyleaf cannot be read, and SPEC §2.4 puts another version outside the question rather than failing it. A `Result<()>` can say neither thing.
 
@@ -173,7 +183,7 @@ Everything in §4.1 writes into a stream the caller supplies, which is the right
 
 **The umask is measured rather than read.** A new file gets `0666` with the umask taken out of it, and there is no portable way to read a umask without setting it, which needs a C call and the `unsafe` this crate forbids. So a file is created the ordinary way beside the temporary one, asked what it got, and removed: three system calls, and only where there is no file to take a mode from.
 
-**Errors stay in the three families.** A destination that already exists reports `Error::Io` carrying `ErrorKind::AlreadyExists`. The library says nothing about how a caller lets someone override that, because it has no flags; naming `--force` is the CLI's job.
+**Errors stay in the families of §4.5.** A destination that already exists reports `Error::Io` carrying `ErrorKind::AlreadyExists`. The library says nothing about how a caller lets someone override that, because it has no flags; naming `--force` is the CLI's job.
 
 ### 4.8 A document without a verdict
 
@@ -278,12 +288,28 @@ SPEC §2.3 excludes the C0 controls and U+007F from `content.file` and lets ever
 **Why `info` does not escape when it is redirected.** The verb has two jobs and they want opposite things. Into a pipe or a file it reproduces the flyleaf member byte for byte, which is what a caller redirecting it asked for and what escaping would ruin: they would get a document the container does not contain. Onto a terminal it is a display, and a terminal is the one place these characters are applied. Splitting on `IsTerminal` is where `ls` and `git` split for the same reason, and it costs no dependency.
 
 
+### 4.14 Additional members
+
+SPEC §2.1 lets a container hold any number of members beyond the flyleaf and the content file, with no defined meaning. A profile keeps its data in them under its own prefix, so a caller has to read one and write a changed container back without extracting anything. `Container::member` and `Repack::member` / `Repack::remove_member` are that, and nothing more: the library moves bytes under names and has no opinion on what any member means.
+
+**A name identifies one member or it identifies none.** Reading, replacing, and removing all locate the member by enumerating the central directory with SPEC §2.1's decoding and comparison, the same path that finds the content file. Two members sharing a name are conformant, and a request naming that name is refused, since which one was meant would depend on the order they sit in.
+
+**The flyleaf and the content file are reserved.** They have their own setters, which keep `content.file` and the archive in agreement; reaching them through the member API would bypass that. Reserved means the flyleaf member, the content file's name as read, and the name `content.file` will hold after the repack, so a rename cannot be undercut by a member written under either name.
+
+**Writes use SPEC §3's rule for member names**, the one extraction applies: `/`-separated segments, each non-empty and neither `.` nor `..`, with no `\`, `:`, C0 control, or U+007F. SPEC §2.1 would accept more inside a container. Applying the extraction rule to what goes in means no member this library writes has a name its own extraction would refuse.
+
+**Extraction is one request with one outcome.** `Unpack` writes the content file, the flyleaf when asked, and additional members when named or when all are asked for, which is SPEC §3's opt-in. Everything is checked before anything is written: each member a regular file entry under one name, the name accepted by the rule above, decodable by this build, and not a file another name needs as a directory. A directory entry asked for is passed over. Directories are created one level at a time and an existing component that is a link, or not a directory, refuses the request. A failure after writing has begun removes every file and directory the request created; a file `force` replaced was not created by it and stays.
+
+**Checking a path and then using it is not atomic.** `std` has no `openat` and this crate forbids `unsafe`, so a process racing to swap a link into the destination during extraction is not stopped. The API documents it rather than taking on `rustix` or `cap-std` for a destination the caller chose and could have made private.
+
+**Stored bytes are the caller's bytes.** A member is written from the stream handed in, deflated and nothing else, and read back exactly. A caller hashing a member over its stored bytes, which is what a tamper-evident log does, depends on that. Members not named are copied through raw, as §4.4 describes.
+
 ## 5. The CLI
 
 Five verbs. Each does one thing the format supports.
 
 - `pack <content> [--name <n>] [--flyleaf <file.toml>] [-o <out.slpc>]` — writes a container. Default output is the content file's name with `.slpc` appended, per the naming convention. With no `--flyleaf`, generates a flyleaf carrying only the two required keys.
-- `unpack <file.slpc> [--dest <dir>] [--flyleaf]` — writes the content file. `--flyleaf` also writes `slipcase.flyleaf.toml`. Nothing else in the archive is written to disk, as the specification requires.
+- `unpack <file.slpc> [--dest <dir>] [--flyleaf] [--member <name>]... [--all-members]` — writes the content file. `--flyleaf` also writes `slipcase.flyleaf.toml`; `--member` and `--all-members` write additional members, which SPEC §3 permits only on explicit request. The request succeeds or fails whole, through `Unpack` (§4.14), and every file written carries the container's provenance.
 - `repack <file.slpc> [--flyleaf <file.toml>] [--content file <file>] [--name <n>] [-o <out.slpc>]` — changes the flyleaf, the content file, or both, and copies every other member through. At least one of the two, since a repack with nothing to change would read as a command that did something.
 - `info <file.slpc>` — prints the flyleaf. Redirected, it reproduces the member byte for byte; onto a terminal it escapes the bidirectional formatting characters, for the reason in §4.13.
 - `validate <file.slpc>` — reports conformance. A container declaring a version this build does not implement is not reported conformant, because everything past the two required keys is a rule this version's text states and none of it was checked. That is exit 3: a refusal to answer, not a verdict on the file.

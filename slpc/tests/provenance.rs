@@ -206,3 +206,56 @@ fn writing_a_new_file_inherits_nothing() {
         "a new file inherited the mark of the one it replaced"
     );
 }
+
+#[test]
+#[cfg(feature = "fs")]
+fn extraction_carries_where_the_container_came_from_onto_every_file() {
+    let dir = sandbox();
+    let container = dir.path().join("downloaded.slpc");
+    std::fs::write(
+        &container,
+        support_container(&[("a.txt", b"content"), ("records/events.toml", b"[[event]]")]),
+    )
+    .unwrap();
+    if !mark_as_downloaded(&container) {
+        eprintln!("skipped: this filesystem will not hold a provenance mark");
+        return;
+    }
+    let out = dir.path().join("out");
+    std::fs::create_dir(&out).unwrap();
+
+    let mut c = slpc::Container::open(&container).unwrap();
+    let written = slpc::Unpack::new(&out)
+        .flyleaf()
+        .all_members()
+        .carry_from(&container)
+        .write(&mut c)
+        .unwrap();
+    assert_eq!(written.len(), 3);
+    for p in written {
+        assert!(
+            arrived_from_elsewhere(&p),
+            "{} says it came from nowhere",
+            p.display()
+        );
+    }
+}
+
+#[cfg(feature = "fs")]
+fn support_container(members: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write;
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default();
+    w.start_file(slpc::FLYLEAF_MEMBER, opts).unwrap();
+    write!(
+        w,
+        "slipcase_version = \"1.1\"\n\n[content]\nfile = \"{}\"\n",
+        members[0].0
+    )
+    .unwrap();
+    for (name, data) in members {
+        w.start_file(*name, opts).unwrap();
+        w.write_all(data).unwrap();
+    }
+    w.finish().unwrap().into_inner()
+}

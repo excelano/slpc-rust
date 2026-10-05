@@ -41,6 +41,16 @@ pub(crate) struct Recorded {
 }
 
 impl Recorded {
+    /// The name as SPEC 2.1 decodes it, or `None` where it has no decoding: a
+    /// name flagged UTF-8 whose bytes are not UTF-8.
+    pub fn decoded(&self) -> Option<String> {
+        if self.utf8 {
+            String::from_utf8(self.bytes.clone()).ok()
+        } else {
+            Some(self.bytes.iter().copied().map(cp437).collect())
+        }
+    }
+
     /// Does this name decode to `want`, as SPEC 2.1 requires it be decoded?
     ///
     /// Comparison is exact over the decoded code points: case-sensitive, and no

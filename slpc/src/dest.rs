@@ -298,6 +298,13 @@ fn new_file_mode(near: &Path) -> Result<Permissions> {
 /// On Windows, whatever `canonicalize` says about `dir`, so a directory that is
 /// not there is an error here rather than at the first write. Nowhere else.
 pub fn content_path(dir: &Path, name: &str) -> Result<PathBuf> {
+    Ok(addressable(dir)?.join(name))
+}
+
+/// `dir` in the form [`content_path`] joins names onto: verbatim on Windows,
+/// as given everywhere else.
+#[cfg_attr(not(windows), allow(clippy::unnecessary_wraps))]
+pub(crate) fn addressable(dir: &Path) -> Result<PathBuf> {
     // Naming the directory, because the bare `canonicalize` error does not.
     // `slipcase unpack --dest nowhere` reported *The system cannot find the
     // file specified. (os error 2)* and left the person to work out which file
@@ -310,7 +317,7 @@ pub fn content_path(dir: &Path, name: &str) -> Result<PathBuf> {
     let dir = std::fs::canonicalize(dir)
         .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", display_path(dir))))?;
 
-    Ok(dir.join(name))
+    Ok(dir.to_owned())
 }
 
 /// A path as it should be shown to a person.
