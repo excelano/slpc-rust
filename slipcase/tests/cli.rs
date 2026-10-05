@@ -190,6 +190,160 @@ fn unpack_refuses_a_destination_that_is_not_there() {
     assert!(err(&o).contains("nowhere"), "{}", err(&o));
 }
 
+/// A container holding `a.txt`, `notes.md`, and `records/events.toml`.
+fn with_members(s: &Sandbox) {
+    use std::io::Write;
+    let mut w = zip::ZipWriter::new(std::fs::File::create(s.path().join("m.slpc")).unwrap());
+    let opts = zip::write::SimpleFileOptions::default();
+    for (name, data) in [
+        (
+            "slipcase.flyleaf.toml",
+            &b"slipcase_version = \"1.1\"\n\n[content]\nfile = \"a.txt\"\n"[..],
+        ),
+        ("a.txt", b"content\n"),
+        ("notes.md", b"notes\n"),
+        ("records/events.toml", b"[[event]]\n"),
+    ] {
+        w.start_file(name, opts).unwrap();
+        w.write_all(data).unwrap();
+    }
+    w.finish().unwrap();
+    std::fs::create_dir(s.path().join("out")).unwrap();
+}
+
+fn listing(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn unpack_writes_no_member_unless_asked() {
+    let s = Sandbox::new();
+    with_members(&s);
+    assert_eq!(code(&s.run(&["unpack", "m.slpc", "--dest", "out"])), 0);
+    assert_eq!(listing(&s.path().join("out")), ["a.txt"]);
+}
+
+#[test]
+fn unpack_writes_the_members_named() {
+    let s = Sandbox::new();
+    with_members(&s);
+    let o = s.run(&[
+        "unpack",
+        "m.slpc",
+        "--dest",
+        "out",
+        "--member",
+        "notes.md",
+        "--member",
+        "records/events.toml",
+    ]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(
+        listing(&s.path().join("out")),
+        ["a.txt", "notes.md", "records"]
+    );
+    assert_eq!(
+        std::fs::read(s.path().join("out/records/events.toml")).unwrap(),
+        b"[[event]]\n"
+    );
+}
+
+#[test]
+fn unpack_writes_every_member_when_asked() {
+    let s = Sandbox::new();
+    with_members(&s);
+    let o = s.run(&[
+        "unpack",
+        "m.slpc",
+        "--dest",
+        "out",
+        "--all-members",
+        "--flyleaf",
+    ]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(
+        listing(&s.path().join("out")),
+        ["a.txt", "notes.md", "records", "slipcase.flyleaf.toml"]
+    );
+}
+
+#[test]
+fn unpack_refuses_a_member_request_and_writes_nothing() {
+    let s = Sandbox::new();
+    with_members(&s);
+    for args in [
+        &["--member", "missing.md"][..],
+        &["--member", "a.txt"],
+        &["--member", "notes.md", "--member", "notes.md"],
+    ] {
+        let mut all = vec!["unpack", "m.slpc", "--dest", "out"];
+        all.extend_from_slice(args);
+        let o = s.run(&all);
+        assert_eq!(code(&o), 1, "{args:?}: {}", err(&o));
+        assert_eq!(
+            listing(&s.path().join("out")),
+            Vec::<String>::new(),
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
+fn unpack_member_flags_conflict() {
+    let s = Sandbox::new();
+    with_members(&s);
+    let o = s.run(&["unpack", "m.slpc", "--member", "notes.md", "--all-members"]);
+    assert_eq!(code(&o), 2);
+}
+
+#[test]
+fn unpack_replaces_a_member_only_with_force() {
+    let s = Sandbox::new();
+    with_members(&s);
+    std::fs::write(s.path().join("out/notes.md"), b"mine\n").unwrap();
+
+    let o = s.run(&["unpack", "m.slpc", "--dest", "out", "--member", "notes.md"]);
+    assert_eq!(code(&o), 1);
+    assert!(err(&o).contains("--force"), "{}", err(&o));
+    assert_eq!(listing(&s.path().join("out")), ["notes.md"]);
+
+    let o = s.run(&[
+        "unpack", "m.slpc", "--dest", "out", "--member", "notes.md", "--force",
+    ]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(
+        std::fs::read(s.path().join("out/notes.md")).unwrap(),
+        b"notes\n"
+    );
+}
+
+#[test]
+fn unpack_carries_where_the_container_came_from_onto_members() {
+    let s = Sandbox::new();
+    with_members(&s);
+    if !mark_as_downloaded(&s.path().join("m.slpc")) {
+        eprintln!("skipped: this filesystem will not hold a provenance mark");
+        return;
+    }
+    let o = s.run(&[
+        "unpack",
+        "m.slpc",
+        "--dest",
+        "out",
+        "--member",
+        "records/events.toml",
+    ]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(slpc::provenance::arrived_from_elsewhere(
+        &s.path().join("out/records/events.toml")
+    ));
+}
+
 // --- info and validate -----------------------------------------------------
 
 #[test]

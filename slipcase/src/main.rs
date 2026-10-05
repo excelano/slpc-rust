@@ -48,7 +48,7 @@ struct Cli {
 enum Verb {
     /// Write a container holding a content file and its flyleaf.
     Pack(Pack),
-    /// Write a container's content file to disk.
+    /// Write a container's content file to disk, and other members when asked.
     Unpack(Unpack),
     /// Change a container's flyleaf or content file, keeping everything else.
     Repack(Repack),
@@ -110,6 +110,12 @@ struct Unpack {
     /// Also write slipcase.flyleaf.toml.
     #[arg(long)]
     flyleaf: bool,
+    /// Also write the additional member NAME. Repeatable.
+    #[arg(long, value_name = "NAME", conflicts_with = "all_members")]
+    member: Vec<String>,
+    /// Also write every additional member.
+    #[arg(long)]
+    all_members: bool,
     /// Overwrite an existing file.
     #[arg(long)]
     force: bool,
@@ -334,103 +340,21 @@ fn unpack(a: Unpack) -> Result<()> {
     let mut c = Container::read(input::container(&a.container)?)?;
     let dest = a.dest.unwrap_or_else(|| PathBuf::from("."));
 
-    // Through `content_path` rather than `dest.join`, and the comment this
-    // replaces is why. It said: content.file is a plain filename, checked
-    // against SPEC 2.3 when the container was read, so joining it to a
-    // destination cannot leave that destination. True, and not the question —
-    // `CON` does not leave the directory, it is not in it. Leaving the
-    // directory was never the only way for a name to fail to be a file.
-    let out = slpc::content_path(&dest, c.content_name())?;
-    let mut content_out = Destination::new(&out, a.force)?;
-
-    // Both destinations are reserved before either is written, which catches
-    // the ordinary case early. It is not the guarantee — see the commit order
-    // below.
-    let mut flyleaf_out = if a.flyleaf {
-        let bytes = c.flyleaf_bytes().to_vec();
-        let mut d = Destination::new(&dest.join(slpc::FLYLEAF_MEMBER), a.force)?;
-        d.writer()
-            .write_all(&bytes)
-            .context("cannot write the flyleaf")?;
-        Some(d)
-    } else {
-        None
-    };
-
-    std::io::copy(&mut c.content()?, content_out.writer())
-        .context("cannot write the content file")?;
-
-    // The flyleaf lands first, and the order is the whole point. Both
-    // destinations are reserved before either is written, but reserving is a
-    // check and committing is the guarantee: `Destination::new` asks whether
-    // the path exists and a dangling symbolic link answers no, so the refusal
-    // arrives at the no-clobber rename instead. Committing the content file first
-    // left it on disk, unmarked, while the command exited non-zero — measured
-    // 2026-08-27, and the comment above this block used to claim the reserving
-    // made that impossible. Committing the smaller file first means a failure
-    // there leaves nothing at all.
-    let flyleaf_landed = match flyleaf_out.take() {
-        Some(d) => {
-            let at = dest.join(slpc::FLYLEAF_MEMBER);
-            d.commit()?;
-            Some(at)
-        }
-        None => None,
-    };
-    // A failure here has already written the flyleaf, and leaving it is the
-    // state the reorder above was meant to stop existing: a command that exited
-    // non-zero and left a file behind, which the obvious retry then fails on.
-    // So it goes back. Only the file this run created — `Destination` refused
-    // to replace anything that was already there, so there is nothing of
-    // anybody else's to remove.
-    if let Err(e) = content_out.commit() {
-        if let Some(at) = flyleaf_landed {
-            let _ = std::fs::remove_file(at);
-        }
-        return Err(e);
+    let mut u = slpc::Unpack::new(&dest).force(a.force);
+    if a.flyleaf {
+        u = u.flyleaf();
     }
-
-    // What the platform records about where the container came from, carried
-    // onto the content file. Without it, unpacking a downloaded container hands its
-    // content file to whatever opens it next as something this machine made, and
-    // the warning the platform would have shown never appears. `slpc`'s
-    // provenance module holds the rule; an error from it means the copy is
-    // ungated where the container was not.
-    //
-    // After `commit` rather than onto the temporary file, because the mark
-    // belongs to the file a person will open and `commit` is what makes that
-    // file exist under its own name.
-    //
-    // Only where the container is a file. Read from standard input there is no
-    // source to read a mark from, and a container that arrived down a pipe
-    // carries no provenance for anyone to lose — the process on the other end
-    // is what dropped it, and this cannot see that far.
+    for name in &a.member {
+        u = u.member(name);
+    }
+    if a.all_members {
+        u = u.all_members();
+    }
+    // A container read from standard input carries no provenance to carry.
     if !input::is_dash(&a.container) {
-        if let Err(e) = slpc::provenance::carry(&a.container, &out) {
-            // The content file is on disk and the platform would have stopped
-            // somebody opening the container it came out of. Leaving it is
-            // leaving exactly the file this is here to prevent — one that
-            // opens without the warning its origin earned — so it goes, and
-            // the message says that it went. `Destination` takes the same line
-            // about a container it could not finish writing. The flyleaf goes
-            // with it, because SPEC 3 removes everything a failed extraction
-            // created, and a flyleaf alone is the retry's next refusal.
-            let removed = std::fs::remove_file(&out).is_ok();
-            if let Some(at) = &flyleaf_landed {
-                let _ = std::fs::remove_file(at);
-            }
-            return Err(Failure::new(format!(
-                "cannot carry where {} came from onto its content: {e}\n                 The content {}, because opening it would not raise the \
-                 warning the container would have.",
-                input::name_of(&a.container),
-                if removed {
-                    "has been removed"
-                } else {
-                    "could not be removed either and is ungated"
-                },
-            )));
-        }
+        u = u.carry_from(&a.container);
     }
+    u.write(&mut c).map_err(output::placement)?;
     Ok(())
 }
 

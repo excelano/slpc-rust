@@ -138,7 +138,7 @@ fn exists(path: &Path) -> Failure {
 /// The one case worth recognizing is a destination that appeared between being
 /// reserved and being committed, which is the same refusal as the check up
 /// front and deserves the same sentence.
-fn placement(e: slpc::Error) -> Failure {
+pub fn placement(e: slpc::Error) -> Failure {
     match &e {
         slpc::Error::Io(io) if io.kind() == std::io::ErrorKind::AlreadyExists => {
             Failure::new(format!("{io}. Pass --force to overwrite it."))
