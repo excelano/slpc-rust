@@ -1293,3 +1293,25 @@ fn reads_no_member_of_a_version_it_does_not_implement() {
         other => panic!("expected Unsupported::Version, got {other:?}"),
     }
 }
+
+#[test]
+fn lists_every_additional_member_by_decoded_name() {
+    let bytes = raw_zip(&[
+        Member::new("records/events.toml", b"[[event]]\n"),
+        Member::new(FLYLEAF_MEMBER, flyleaf("a.txt").as_bytes()),
+        Member::new("records/components/01-receipt.pdf", b"%PDF"),
+        Member::new("a.txt", b"content"),
+        Member::new("twice", b"1"),
+        Member::new("twice", b"2"),
+    ]);
+    let c = open(&bytes).unwrap();
+    assert_eq!(
+        c.member_names(),
+        [
+            "records/events.toml",
+            "records/components/01-receipt.pdf",
+            "twice",
+            "twice"
+        ]
+    );
+}

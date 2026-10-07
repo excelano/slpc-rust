@@ -79,6 +79,7 @@ c.content_size()?;    // u64 — uncompressed, read off the central directory
 c.check_content_readable()?;  // -> Result<(), Unsupported> — can this build decode it
 let mut r = c.content()?;   // impl Read — streams, never buffered whole
 let mut m = c.member("records/events.toml")?;   // an additional member, by name. §4.14
+let names = c.member_names();                   // every additional member's name. §4.14
 
 slpc::flyleaf_of(reader)?;   // -> DocumentMut — the document, no verdict attached
 
