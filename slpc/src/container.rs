@@ -502,6 +502,23 @@ impl<R: Read + Seek> Container<R> {
         }
         Ok(self.archive.by_index(i)?)
     }
+
+    /// Every additional member's name, decoded as SPEC 2.1 says, in the
+    /// order the central directory records them.
+    ///
+    /// The flyleaf and the content file are left out. A name two members
+    /// share is listed once per member, so a caller can refuse it the way
+    /// [`Container::member`] does. A directory entry is listed by its name,
+    /// which ends in `/`. A name that does not decode is left out: it equals
+    /// nothing a caller could ask for.
+    #[must_use]
+    pub fn member_names(&self) -> Vec<String> {
+        self.names
+            .iter()
+            .filter_map(central::Recorded::decoded)
+            .filter(|n| n != FLYLEAF_MEMBER && *n != self.content_file)
+            .collect()
+    }
 }
 
 /// The flyleaf document of a byte stream, asking no conformance question.
