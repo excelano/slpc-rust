@@ -1,6 +1,6 @@
 # slpc-rust — Design Document
 
-**Implements:** Slipcase specification 1.0
+**Implements:** the Slipcase specification version that `VERSION` in `slpc/src/lib.rs` names
 **Section references:** `SPEC §2.3` is the specification in `excelano/slipcase`; a bare `§4.3` is this document. The two number their sections independently and both have a §3 and a §5, so neither is safe to read from context.
 
 ---
@@ -26,7 +26,7 @@ Repository and crate names are independent: the repository is `slpc-rust`, the c
 
 Two consequences for the release path. The CLI's dependency on the library carries both a path and a version, since crates.io rejects a path-only dependency; and `slpc` publishes before `slipcase`, because the registry must already hold the version the binary asks for.
 
-The two crates version in lockstep, the CLI being a thin shell over the library. Independent versions would mean per-crate tags against the fleet's one-version-per-repository convention. The workflow that publishes them is this repository's own rather than the fleet's shared one, which runs a bare `cargo publish` that a workspace root with two members rejects.
+The two crates version in lockstep, the CLI being a thin shell over the library. Independent versions would mean per-crate tags against the fleet's one-version-per-repository convention. `ship-crates` in excelano/shipping publishes the workspace members in dependency order.
 
 ---
 
