@@ -49,7 +49,7 @@ pub(crate) struct Entry {
 fn entries_of<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<Vec<Entry>> {
     let mut entries = Vec::with_capacity(archive.len());
     for i in 0..archive.len() {
-        let f = archive.by_index_raw(i)?;
+        let f = archive.by_index_raw(i).map_err(Error::from_zip)?;
         entries.push(Entry {
             raw: f.name_raw().to_owned(),
             kind: EntryKind::from_mode(f.unix_mode()),
@@ -182,7 +182,7 @@ impl<R: Read + Seek> Container<R> {
         let names = central::names(&mut reader)?;
         reader.rewind()?;
 
-        let mut archive = ZipArchive::new(reader)?;
+        let mut archive = ZipArchive::new(reader).map_err(Error::from_zip)?;
 
         let entries = entries_of(&mut archive)?;
 
@@ -459,7 +459,7 @@ impl<R: Read + Seek> Container<R> {
         let i = self
             .content_index
             .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
-        Ok(self.archive.by_index(i)?)
+        self.archive.by_index(i).map_err(Error::from_zip)
     }
 
     /// A member, found by name, as a stream.
@@ -500,7 +500,7 @@ impl<R: Read + Seek> Container<R> {
             }
             .into());
         }
-        Ok(self.archive.by_index(i)?)
+        self.archive.by_index(i).map_err(Error::from_zip)
     }
 
     /// Every additional member's name, decoded as SPEC 2.1 says, in the
@@ -551,7 +551,7 @@ pub fn flyleaf_of_with<R: Read + Seek>(mut reader: R, limits: Limits) -> Result<
     let names = central::names(&mut reader)?;
     reader.rewind()?;
 
-    let mut archive = ZipArchive::new(reader)?;
+    let mut archive = ZipArchive::new(reader).map_err(Error::from_zip)?;
     let entries = entries_of(&mut archive)?;
 
     let i = match locate(&entries, &names, FLYLEAF_MEMBER) {
@@ -567,12 +567,11 @@ pub fn flyleaf_of_with<R: Read + Seek>(mut reader: R, limits: Limits) -> Result<
 /// Decompress the flyleaf member, stopping at the bound SPEC 6 requires.
 ///
 /// The recorded size is read first because it refuses the ordinary hostile case
-/// without inflating a byte. It is not the guarantee: measured against
-/// `zip` 8.6, a central directory rewritten to declare 100 bytes for a member
-/// that inflates to 209,715,259 still inflated in full and still cost 621 MB
-/// resident. Nothing in ZIP checks the two against each other, so the bound has
-/// to be applied to the bytes as they arrive, and the recorded size is worth
-/// exactly one cheap refusal.
+/// without inflating a byte. It is not the guarantee, since the file's author
+/// wrote it: the bound is applied to the bytes as they arrive. A member that
+/// inflates past its recorded size is stopped by the ZIP crate first, as an
+/// `InvalidData` read error, and the `take` is this library's own bound
+/// whatever the crate checks.
 ///
 /// `limit + 1` so that reaching the bound is a refusal rather than a silent
 /// truncation: a document cut off at the limit would parse to something the
@@ -590,7 +589,7 @@ fn read_flyleaf_member<R: Read + Seek>(
     }
 
     let mut bytes = Vec::new();
-    let mut member = archive.by_index(index)?;
+    let mut member = archive.by_index(index).map_err(Error::from_zip)?;
     member.by_ref().take(limit + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > limit {
         return Err(too_large().into());

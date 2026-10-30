@@ -30,7 +30,7 @@ rust-version.workspace = true
 # Writing a container to a path, rather than into a writer the caller supplies.
 # Off by default: a caller who only reads containers, or who writes into a
 # socket or a buffer, should not acquire tempfile to do it, and the tree stays
-# at fifteen crates for everyone who does not ask. Both binaries ask.
+# smaller for everyone who does not ask. Both binaries ask.
 #
 # Implies `provenance`, and that is a security property rather than
 # convenience. `in_place` replaces a file by renaming a fresh one over it, and a
@@ -59,7 +59,7 @@ provenance = ["dep:xattr"]
 # Default features link libbz2 and libzstd through bzip2-sys and zstd-sys. The
 # flate2 backend is named directly rather than through the `deflate` feature,
 # which would also pull zopfli for a compression level nothing here asks for.
-zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 toml_edit = "0.25"
 # The `fs` feature alone. Its tree is pure Rust: libc and linux-raw-sys are
 # declarations rather than a C library to compile.
@@ -81,7 +81,7 @@ tempfile = "3.27"
 crc32fast = "1.5"
 # The suite builds one deflated fixture with an ordinary writer, because
 # compressing by hand would test the test rather than the library.
-zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # Extended attributes, for the `provenance` feature. `default-features = false`
 # keeps it to `rustix` rather than adding a `std::fs`-shaped convenience layer,

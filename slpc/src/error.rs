@@ -426,13 +426,13 @@ impl From<Unsupported> for Error {
     }
 }
 
-impl From<zip::result::ZipError> for Error {
+impl Error {
     /// Sort the ZIP crate's one error type into the families of DESIGN.md 4.5.
     ///
     /// The split that matters is `UnsupportedArchive`, which covers both an
     /// encrypted member and whatever else the crate declines to read. Both are
     /// [`Unsupported`], because SPEC 2.5 forbids calling either non-conformant.
-    fn from(e: zip::result::ZipError) -> Self {
+    pub(crate) fn from_zip(e: zip::result::ZipError) -> Self {
         use zip::result::ZipError as Z;
         match e {
             Z::Io(e) => Self::Io(e),

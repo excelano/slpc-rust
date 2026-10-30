@@ -510,7 +510,7 @@ fn member_names(path: &Path) -> Vec<String> {
     let f = std::fs::File::open(path).unwrap();
     let mut a = zip::ZipArchive::new(f).unwrap();
     (0..a.len())
-        .map(|i| a.by_index_raw(i).unwrap().name().to_owned())
+        .map(|i| a.by_index_raw(i).unwrap().name().unwrap().into_owned())
         .collect()
 }
 

@@ -9,7 +9,7 @@ use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use crate::container::{locate, Container, Located};
-use crate::error::{EntryKind, MemberError, MemberNameError, Result, Unsupported};
+use crate::error::{EntryKind, Error, MemberError, MemberNameError, Result, Unsupported};
 use crate::{dest, name, Destination, FLYLEAF_MEMBER};
 
 /// Write a container's content file into a directory, with the flyleaf and
@@ -287,7 +287,10 @@ impl Unpack {
             }
             Source::Flyleaf => out.writer().write_all(c.flyleaf_bytes())?,
             Source::Member(i) => {
-                std::io::copy(&mut c.archive.by_index(*i)?, out.writer())?;
+                std::io::copy(
+                    &mut c.archive.by_index(*i).map_err(Error::from_zip)?,
+                    out.writer(),
+                )?;
             }
         }
         let replacing = std::fs::symlink_metadata(&path).is_ok();

@@ -412,8 +412,8 @@ fn the_size_is_the_uncompressed_one() {
     // the archive.
     let text = "a".repeat(4096);
     let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let opts: zip::write::FileOptions<'_, ()> =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
     w.start_file(FLYLEAF_MEMBER, opts).unwrap();
     std::io::Write::write_all(&mut w, flyleaf("big.txt").as_bytes()).unwrap();
     w.start_file("big.txt", opts).unwrap();
@@ -463,8 +463,8 @@ fn the_crc_is_of_the_uncompressed_content() {
     // coincidence on an incompressible content file.
     let text = "a".repeat(4096);
     let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let opts: zip::write::FileOptions<'_, ()> =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
     w.start_file(FLYLEAF_MEMBER, opts).unwrap();
     std::io::Write::write_all(&mut w, flyleaf("big.txt").as_bytes()).unwrap();
     w.start_file("big.txt", opts).unwrap();
@@ -816,12 +816,11 @@ fn a_flyleaf_member_over_the_bound_is_undetermined() {
 /// The bound is applied to the bytes, not to the size the directory recorded.
 ///
 /// Catches the obvious implementation of SPEC 6, which is to read the recorded
-/// uncompressed size and refuse on that alone. Measured against `zip` 8.6: a
-/// central directory rewritten to declare a hundred bytes for a member that
-/// inflates to two hundred megabytes is not checked by anything, and the member
-/// still arrives in full. Here the directory understates the member and the
-/// only thing standing between the reader and the whole of it is the bound on
-/// the read itself.
+/// uncompressed size and refuse on that alone. Here the directory understates
+/// the flyleaf member, so the recorded size passes the bound and the member
+/// does not. The read has to stop either way; the ZIP crate gets there first
+/// and reports the archive contradicting itself as an I/O error, the family a
+/// failed checksum is reported in.
 #[test]
 fn a_lying_recorded_size_does_not_get_past_the_bound() {
     let mut bytes = container("report.pdf", b"content\n");
@@ -836,10 +835,8 @@ fn a_lying_recorded_size_does_not_get_past_the_bound() {
     limits.flyleaf_bytes = (member.len() - 1) as u64;
 
     match slpc::validate_with(std::io::Cursor::new(bytes), limits) {
-        Ok(slpc::Verdict::Undetermined(Unsupported::FlyleafTooLarge { declared, .. })) => {
-            assert_eq!(declared, 1, "the recorded size is reported as recorded");
-        }
-        other => panic!("expected the read to stop at the bound, got {other:?}"),
+        Err(slpc::Error::Io(e)) => assert_eq!(e.kind(), std::io::ErrorKind::InvalidData),
+        other => panic!("expected the read to stop, got {other:?}"),
     }
 }
 

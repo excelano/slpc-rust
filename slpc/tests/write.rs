@@ -70,7 +70,7 @@ fn members(bytes: &[u8]) -> Vec<(String, zip::CompressionMethod)> {
     (0..a.len())
         .map(|i| {
             let f = a.by_index_raw(i).unwrap();
-            (f.name().to_owned(), f.compression())
+            (f.name().unwrap().into_owned(), f.compression())
         })
         .collect()
 }
@@ -798,7 +798,7 @@ fn repacking_leaves_no_member_promising_a_data_descriptor() {
     // A ZIP written to a stream cannot know a member's size before the data
     // goes down, so it writes zeroes into the local header, sets general
     // purpose bit 3, and puts the sizes in a data descriptor after the data.
-    // A member copied through raw already knows its sizes, and `zip` 8.6 sets
+    // A member copied through raw already knows its sizes, and the ZIP crate sets
     // the bit for it and then writes no descriptor: the local header claims a
     // length of zero and nothing supplies the real one. Every reader that walks
     // the central directory is fine, which is why the rest of this suite could
@@ -817,7 +817,7 @@ fn repacking_leaves_no_member_promising_a_data_descriptor() {
     let mut a = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
     for i in 0..a.len() {
         let f = a.by_index_raw(i).unwrap();
-        let name = f.name().to_owned();
+        let name = f.name().unwrap().into_owned();
         let at = usize::try_from(f.header_start()).unwrap();
         let flags = u16::from_le_bytes([bytes[at + 6], bytes[at + 7]]);
         let local_size = u32::from_le_bytes(bytes[at + 18..at + 22].try_into().unwrap());
@@ -841,7 +841,7 @@ fn stored(bytes: &[u8]) -> Vec<(String, Vec<u8>, zip::CompressionMethod)> {
             let mut f = a.by_index_raw(i).unwrap();
             let mut raw = Vec::new();
             f.read_to_end(&mut raw).unwrap();
-            (f.name().to_owned(), raw, f.compression())
+            (f.name().unwrap().into_owned(), raw, f.compression())
         })
         .collect()
 }

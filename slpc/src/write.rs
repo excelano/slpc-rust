@@ -12,10 +12,10 @@ use std::path::Path;
 
 use toml_edit::DocumentMut;
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipWriter};
+use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::container::{locate, locate_content, Container, Located};
-use crate::error::{Malformed, MemberError, NameError, Result, Unsupported};
+use crate::error::{Error, Malformed, MemberError, NameError, Result, Unsupported};
 use crate::{flyleaf, name, CONTENT_FILE_KEY, FLYLEAF_MEMBER, VERSION, VERSION_KEY};
 
 /// Pack a content file read from a stream.
@@ -330,29 +330,23 @@ impl<'a, R: Read + Seek> Repack<'a, R> {
             // one that counts.
             if i == c.flyleaf_index {
                 match &new_flyleaf {
-                    Some(bytes) => {
-                        w.start_file(FLYLEAF_MEMBER, options())?;
-                        w.write_all(bytes)?;
-                    }
-                    None => w.raw_copy_file(c.archive.by_index_raw(i)?)?,
+                    Some(bytes) => add_member(&mut w, FLYLEAF_MEMBER, bytes.as_slice())?,
+                    None => copy_member(&mut w, &mut c.archive, i)?,
                 }
             } else if let Some((name, data)) = content.as_mut().filter(|_| Some(i) == content_at) {
-                w.start_file(name.as_str(), options())?;
-                std::io::copy(data, &mut w)?;
+                add_member(&mut w, name, data)?;
             } else if let Some(&k) = plan.replaced.get(&i) {
                 let (name, data) = &mut members[k];
-                w.start_file(name.as_str(), options())?;
-                std::io::copy(data, &mut w)?;
+                add_member(&mut w, name, data)?;
             } else {
-                w.raw_copy_file(c.archive.by_index_raw(i)?)?;
+                copy_member(&mut w, &mut c.archive, i)?;
             }
         }
         for k in plan.added {
             let (name, data) = &mut members[k];
-            w.start_file(name.as_str(), options())?;
-            std::io::copy(data, &mut w)?;
+            add_member(&mut w, name, data)?;
         }
-        w.finish()?.flush()?;
+        w.finish().map_err(Error::from_zip)?.flush()?;
         Ok(())
     }
 }
@@ -469,12 +463,33 @@ fn options() -> SimpleFileOptions {
     SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)
 }
 
+/// Start a deflated member named `name` and copy `data` into it.
+fn add_member<W: Write + Seek>(
+    w: &mut ZipWriter<W>,
+    name: &str,
+    mut data: impl Read,
+) -> Result<()> {
+    w.start_file(name, options()).map_err(Error::from_zip)?;
+    std::io::copy(&mut data, w)?;
+    Ok(())
+}
+
+/// Copy source member `i` as it is stored, without decompressing it.
+fn copy_member<R: Read + Seek, W: Write + Seek>(
+    w: &mut ZipWriter<W>,
+    archive: &mut ZipArchive<R>,
+    i: usize,
+) -> Result<()> {
+    let member = archive.by_index_raw(i).map_err(Error::from_zip)?;
+    w.raw_copy_file(member).map_err(Error::from_zip)
+}
+
 /// Close the archive and flush whatever it was writing into.
 ///
 /// A buffered writer that is only dropped swallows the error from its last
 /// flush, which would turn a full disk into a container that looks written.
 fn finish<W: Write>(w: ZipWriter<zip::write::StreamWriter<W>>) -> Result<()> {
-    w.finish()?.into_inner().flush()?;
+    w.finish().map_err(Error::from_zip)?.into_inner().flush()?;
     Ok(())
 }
 
@@ -488,10 +503,8 @@ where
     let doc = with_required_keys(flyleaf.into(), content_name)?;
 
     let mut w = ZipWriter::new_stream(out);
-    w.start_file(FLYLEAF_MEMBER, options())?;
-    w.write_all(doc.to_string().as_bytes())?;
-    w.start_file(content_name, options())?;
-    std::io::copy(&mut content, &mut w)?;
+    add_member(&mut w, FLYLEAF_MEMBER, doc.to_string().as_bytes())?;
+    add_member(&mut w, content_name, &mut content)?;
     finish(w)
 }
 
