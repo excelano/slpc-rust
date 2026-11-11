@@ -49,20 +49,6 @@ is `slipcase`. `winget install slipcase` reaches Slipcase Desktop, the viewer
 and flyleaf editor, which is a different program that opens containers rather
 than a command that makes them.
 
-Without winget, in PowerShell:
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://github.com/excelano/slpc-rust/releases/latest/download/slipcase-installer.ps1 | iex"
-```
-
-### Curl (any Linux or macOS)
-
-```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/excelano/slpc-rust/main/install.sh | sh
-```
-
-To remove it: swap `install.sh` for `uninstall.sh` in that line.
-
 Every release also carries plain archives — macOS and Linux on both Intel and
 ARM, Windows on Intel — each with a `.sha256` beside it.
 <!-- /shared:install -->
@@ -75,16 +61,18 @@ slipcase pack report.pdf --flyleaf owner.toml       # writes report.pdf.slpc
 slipcase info report.pdf.slpc                       # prints the flyleaf; verbatim when redirected
 slipcase repack report.pdf.slpc --flyleaf new.toml  # changes it in place, keeping the rest
 slipcase validate report.pdf.slpc                   # exit 0 if conformant
-slipcase unpack report.pdf.slpc --dest ./out        # writes the content file and nothing else
+slipcase unpack report.pdf.slpc --dest ./out        # writes the content file; --flyleaf, --member or --all-members add more
 ```
 <!-- /shared:verbs -->
 
-Five verbs, each doing one thing the format supports. `pack` sets both required
+Each verb does one thing the format supports. `pack` sets both required
 flyleaf keys itself, so a `--flyleaf` file that contradicts either is refused
 rather than silently overwritten, and a content file whose filename cannot be a
-member name is rejected rather than renamed. `unpack` writes the content file and,
-with `--flyleaf`, the flyleaf document; nothing else in the archive reaches
-disk. It also carries whatever the platform records about where the container
+member name is rejected rather than renamed. `unpack` writes the content file, and
+other members only when asked: `--flyleaf` adds the flyleaf document,
+`--member NAME` an additional member, and `--all-members` every one. A member
+name may carry directories, and each `/`-separated segment is checked before
+anything is written; no symbolic link beneath the destination is followed. It also carries whatever the platform records about where the container
 came from onto the content file, so that unpacking something downloaded does not hand
 its content file on as a file this machine made — and where it cannot, it removes the
 content file and says so rather than leaving one that opens without the warning its

@@ -58,6 +58,10 @@ is `slipcase`. `winget install slipcase` reaches Slipcase Desktop, the viewer
 and flyleaf editor, which is a different program that opens containers rather
 than a command that makes them.
 
+Every release also carries plain archives — macOS and Linux on both Intel and
+ARM, Windows on Intel — each with a `.sha256` beside it.
+<!-- /shared:install -->
+
 ## The tool
 
 <!-- shared:verbs -->
@@ -66,7 +70,7 @@ slipcase pack report.pdf --flyleaf owner.toml       # writes report.pdf.slpc
 slipcase info report.pdf.slpc                       # prints the flyleaf; verbatim when redirected
 slipcase repack report.pdf.slpc --flyleaf new.toml  # changes it in place, keeping the rest
 slipcase validate report.pdf.slpc                   # exit 0 if conformant
-slipcase unpack report.pdf.slpc --dest ./out        # writes the content file and nothing else
+slipcase unpack report.pdf.slpc --dest ./out        # writes the content file; --flyleaf, --member or --all-members add more
 ```
 <!-- /shared:verbs -->
 

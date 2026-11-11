@@ -90,8 +90,8 @@ temporary file beside it, with the permissions a file there should have, renamed
 into place at the end. A write that fails partway leaves nothing behind rather
 than a truncated container that looks like one.
 
-```toml
-slpc = { version = "0.4", features = ["fs"] }
+```sh
+cargo add slpc --features fs
 ```
 
 It is a feature rather than part of the default surface because a caller writing
@@ -115,15 +115,15 @@ something puts it there. Without that, unpacking is laundering: the content file
 reaches whatever opens it next as a file this machine made, and the warning the
 platform would have raised never appears.
 
-```toml
-slpc = { version = "0.4", features = ["fs", "provenance"] }
+```sh
+cargo add slpc --features provenance
 ```
 
 `provenance::carry` moves it across — `com.apple.quarantine` on macOS, a
 `Zone.Identifier` stream on Windows, `user.xdg.origin.url` on Linux. It fails
 only where the platform gates opening on a mark, the source carries one, and the
-copy ends up carrying none, so the whole of the rule for a caller about to hand a
-content file to the system is that **an error means do not open it**.
+copy ends up carrying none, so the rule for a caller about to hand a content file to
+the system is that **an error means do not open it**.
 
 ```no_run
 use slpc::provenance::{carry, Mark};
@@ -139,10 +139,12 @@ fn main() -> Result<(), slpc::Error> {
 }
 ```
 
-Off by default, and separate from `fs`: a caller writing containers has no use
-for it, and one unpacking only their own does not need it either. On Windows it
-adds nothing at all. On Unix it adds one crate on top of `fs`, or four without
-it, `fs` already carrying most of what `xattr` needs.
+Off by default, and turned on by `fs`: `Destination` replaces a file by renaming
+a fresh one over it, and a fresh file carries no mark, so without the carry every
+in-place rewrite of a downloaded container would strip the record of where it
+came from. A caller who only reads containers can turn on `provenance` alone. On
+Windows it adds nothing at all. On Unix it adds `xattr`, whose dependencies `fs`
+already brings in through `tempfile`.
 
 ## Validating
 
