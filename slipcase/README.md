@@ -43,8 +43,8 @@ is `slipcase`. `winget install slipcase` reaches Slipcase Desktop, the viewer
 and flyleaf editor, which is a different program that opens containers rather
 than a command that makes them.
 
-Every release also carries plain archives — macOS and Linux on both Intel and
-ARM, Windows on Intel — each with a `.sha256` beside it.
+Each GitHub release carries the `.deb` packages and the Windows zip that winget
+installs. On macOS, `cargo install slipcase` builds it from crates.io.
 <!-- /shared:install -->
 
 ## Using it

@@ -1,9 +1,11 @@
+# Author: David M. Anderson
+# Built with AI assistance (Claude, Anthropic)
+
 [package]
 name = "corpus"
 description = "Run the Slipcase conformance corpus against this workspace"
 # Never published and never released, so it has no version to carry. It is in
-# the workspace to be built and run, not to be shipped: `dist-workspace.toml`
-# names its members explicitly and this is not one of them.
+# the workspace to be built and run, not to be shipped.
 version = "0.0.0"
 publish = false
 edition.workspace = true
