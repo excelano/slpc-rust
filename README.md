@@ -35,12 +35,6 @@ sudo apt install slipcase
 
 Both amd64 and arm64 packages ship with every release.
 
-### Homebrew
-
-```sh
-brew install excelano/tap/slipcase
-```
-
 ### crates.io
 
 ```sh
