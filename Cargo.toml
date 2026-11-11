@@ -24,9 +24,6 @@ rust-version = "1.88"
 [workspace.dependencies]
 slpc = { path = "slpc", version = "0.7.0" }
 
-# cargo-dist builds release binaries under this profile. Thin LTO rather than
-# fat: the link is a fraction of the time and the size difference on a binary
-# this small does not pay for the rest.
 # Overflow checks stay on in release, and that is for `fuzz/`.
 #
 # The harness names "arithmetic on a length an attacker chose" as one of three
@@ -38,7 +35,3 @@ slpc = { path = "slpc", version = "0.7.0" }
 # 110 panics in debug and none in release. It costs 2.9% on a 200,000-case run.
 [profile.release]
 overflow-checks = true
-
-[profile.dist]
-inherits = "release"
-lto = "thin"
