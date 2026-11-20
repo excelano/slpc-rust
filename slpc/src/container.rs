@@ -42,6 +42,18 @@ pub(crate) struct Entry {
     pub(crate) unsupported_method: Option<u16>,
 }
 
+impl Entry {
+    pub(crate) fn readable(&self) -> std::result::Result<(), Unsupported> {
+        if self.encrypted {
+            return Err(Unsupported::Encrypted);
+        }
+        match self.unsupported_method {
+            Some(m) => Err(Unsupported::Compression(m)),
+            None => Ok(()),
+        }
+    }
+}
+
 /// Collect what the central directory says about every member, in one pass.
 ///
 /// `by_index_raw` rather than `by_index`: the latter refuses a member whose
@@ -68,10 +80,7 @@ fn entries_of<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<Vec<Entry>>
 ///
 /// The ZIP crate gates each `CompressionMethod` variant behind one of its own
 /// features, so a method the build was not given arrives as `Unsupported`
-/// carrying the number the archive stated. That is the test the crate itself
-/// makes before it builds a decoder, which is what keeps
-/// [`Container::check_content_readable`] from answering differently from
-/// extraction.
+/// carrying the number the archive stated.
 #[allow(deprecated)]
 fn unsupported_method(method: zip::CompressionMethod) -> Option<u16> {
     match method {
@@ -443,13 +452,7 @@ impl<R: Read + Seek> Container<R> {
         let i = self
             .content_index
             .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
-        if self.entries[i].encrypted {
-            return Err(Unsupported::Encrypted);
-        }
-        if let Some(m) = self.entries[i].unsupported_method {
-            return Err(Unsupported::Compression(m));
-        }
-        Ok(())
+        self.entries[i].readable()
     }
 
     /// The content file, as a stream.
@@ -461,6 +464,7 @@ impl<R: Read + Seek> Container<R> {
         let i = self
             .content_index
             .ok_or_else(|| Unsupported::Version(self.version.clone()))?;
+        self.entries[i].readable()?;
         self.archive.by_index(i).map_err(Error::from_zip)
     }
 
@@ -502,6 +506,7 @@ impl<R: Read + Seek> Container<R> {
             }
             .into());
         }
+        self.entries[i].readable()?;
         self.archive.by_index(i).map_err(Error::from_zip)
     }
 

@@ -9,7 +9,7 @@ use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use crate::container::{locate, Container, Located};
-use crate::error::{EntryKind, Error, MemberError, MemberNameError, Result, Unsupported};
+use crate::error::{EntryKind, Error, MemberError, MemberNameError, Result};
 use crate::{dest, name, Destination, FLYLEAF_MEMBER};
 
 /// Write a container's content file into a directory, with the flyleaf and
@@ -223,12 +223,7 @@ impl Unpack {
                 name: n.clone(),
                 cause,
             })?;
-            if entry.encrypted {
-                return Err(Unsupported::Encrypted.into());
-            }
-            if let Some(m) = entry.unsupported_method {
-                return Err(Unsupported::Compression(m).into());
-            }
+            entry.readable()?;
             plan.push((n, Source::Member(i)));
         }
 
