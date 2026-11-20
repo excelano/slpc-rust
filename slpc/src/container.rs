@@ -10,7 +10,10 @@ use toml_edit::DocumentMut;
 use zip::ZipArchive;
 
 use crate::error::{EntryKind, Error, Malformed, MemberError, Result, Unsupported};
-use crate::{central, flyleaf, name, Limits, FLYLEAF_MEMBER, VERSION};
+use crate::{central, flyleaf, name, Limits, FLYLEAF_MEMBER, VERSION, VERSION_KEY};
+
+/// What version 1.0 named the flyleaf member (SPEC Appendix C).
+const FLYLEAF_MEMBER_1_0: &str = "slipcase.metadata.toml";
 
 /// One member of the central directory, as far as this library cares.
 ///
@@ -188,7 +191,7 @@ impl<R: Read + Seek> Container<R> {
 
         let flyleaf_index = match locate(&entries, &names, FLYLEAF_MEMBER) {
             Located::One(i) => i,
-            Located::None => return Err(Malformed::NoFlyleafMember.into()),
+            Located::None => return Err(no_flyleaf(&mut archive, &entries, &names, limits)),
             Located::Several(n) => return Err(Malformed::DuplicateFlyleafMember(n).into()),
         };
 
@@ -556,12 +559,40 @@ pub fn flyleaf_of_with<R: Read + Seek>(mut reader: R, limits: Limits) -> Result<
 
     let i = match locate(&entries, &names, FLYLEAF_MEMBER) {
         Located::One(i) => i,
-        Located::None => return Err(Malformed::NoFlyleafMember.into()),
+        Located::None => return Err(no_flyleaf(&mut archive, &entries, &names, limits)),
         Located::Several(n) => return Err(Malformed::DuplicateFlyleafMember(n).into()),
     };
 
     let bytes = read_flyleaf_member(&mut archive, i, entries[i].size, limits)?;
     flyleaf::document(&bytes)
+}
+
+/// What a container without a flyleaf member is.
+///
+/// A 1.0 container names its flyleaf differently, and SPEC 2.4 puts it outside
+/// this version's question rather than failing it (Appendix C). Anything else
+/// carrying the 1.0 name holds only an additional member under SPEC 2.1.
+fn no_flyleaf<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    entries: &[Entry],
+    names: &[central::Recorded],
+    limits: Limits,
+) -> Error {
+    let Located::One(i) = locate(entries, names, FLYLEAF_MEMBER_1_0) else {
+        return Malformed::NoFlyleafMember.into();
+    };
+    let bytes = match read_flyleaf_member(archive, i, entries[i].size, limits) {
+        Ok(bytes) => bytes,
+        Err(e) => return e,
+    };
+    let declares_1_0 = flyleaf::document(&bytes).is_ok_and(|doc| {
+        flyleaf::lookup(&doc, VERSION_KEY).and_then(toml_edit::Item::as_str) == Some("1.0")
+    });
+    if declares_1_0 {
+        Unsupported::Version("1.0".to_owned()).into()
+    } else {
+        Malformed::NoFlyleafMember.into()
+    }
 }
 
 /// Decompress the flyleaf member, stopping at the bound SPEC 6 requires.

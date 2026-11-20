@@ -325,6 +325,41 @@ fn an_unrecognised_version_parses_and_reports_but_yields_no_content() {
     }
 }
 
+fn version_1_0_container(version: &str) -> Vec<u8> {
+    let meta = format!("slipcase_version = \"{version}\"\n\n[payload]\nfile = \"a.txt\"\n");
+    raw_zip(&[
+        Member::new("slipcase.metadata.toml", meta.as_bytes()),
+        Member::new("a.txt", b"x"),
+    ])
+}
+
+#[test]
+fn a_version_1_0_container_is_out_of_scope_rather_than_non_conformant() {
+    let bytes = version_1_0_container("1.0");
+    match slpc::validate(std::io::Cursor::new(bytes.clone())).unwrap() {
+        slpc::Verdict::OutOfScope(v) => assert_eq!(v, "1.0"),
+        other => panic!("expected OutOfScope, got {other:?}"),
+    }
+    for got in [
+        open(&bytes).err(),
+        slpc::flyleaf_of(std::io::Cursor::new(bytes)).err(),
+    ] {
+        match got {
+            Some(Error::Unsupported(Unsupported::Version(v))) => assert_eq!(v, "1.0"),
+            other => panic!("expected Unsupported::Version, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn the_1_0_flyleaf_name_declaring_another_version_is_only_an_extra_member() {
+    let bytes = version_1_0_container("1.1");
+    assert!(matches!(
+        open(&bytes),
+        Err(Error::Malformed(Malformed::NoFlyleafMember))
+    ));
+}
+
 #[test]
 fn a_content_compressed_beyond_this_build_still_validates() {
     // Method 12 is bzip2, which the C-free feature set leaves out. SPEC 2.5

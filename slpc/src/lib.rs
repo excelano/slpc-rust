@@ -130,6 +130,7 @@ pub fn validate_with<R: std::io::Read + std::io::Seek>(
     match Container::read_with(reader, limits) {
         Ok(c) if c.version() == VERSION => Ok(Verdict::Conformant),
         Ok(c) => Ok(Verdict::OutOfScope(c.version().to_owned())),
+        Err(Error::Unsupported(Unsupported::Version(v))) => Ok(Verdict::OutOfScope(v)),
         Err(Error::Malformed(m)) => Ok(Verdict::NonConformant(m)),
         Err(Error::Unsupported(u)) => Ok(Verdict::Undetermined(u)),
         Err(e) => Err(e),
