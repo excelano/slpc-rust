@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "slipcase"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "clap",
  "slpc",
@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "slpc"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "crc32fast",
  "tempfile",
