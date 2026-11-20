@@ -12,7 +12,6 @@ use zip::ZipArchive;
 use crate::error::{EntryKind, Error, Malformed, MemberError, Result, Unsupported};
 use crate::{central, flyleaf, name, Limits, FLYLEAF_MEMBER, VERSION, VERSION_KEY};
 
-/// What version 1.0 named the flyleaf member (SPEC Appendix C).
 const FLYLEAF_MEMBER_1_0: &str = "slipcase.metadata.toml";
 
 /// One member of the central directory, as far as this library cares.
@@ -567,11 +566,6 @@ pub fn flyleaf_of_with<R: Read + Seek>(mut reader: R, limits: Limits) -> Result<
     flyleaf::document(&bytes)
 }
 
-/// What a container without a flyleaf member is.
-///
-/// A 1.0 container names its flyleaf differently, and SPEC 2.4 puts it outside
-/// this version's question rather than failing it (Appendix C). Anything else
-/// carrying the 1.0 name holds only an additional member under SPEC 2.1.
 fn no_flyleaf<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     entries: &[Entry],
